@@ -1,0 +1,2731 @@
+<!doctype html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Ads Manager Pro V15.9 - Agency Level</title>
+  <style>
+    /* TỔNG THỂ NỀN TRẮNG/XÁM NHẠT CHUẨN FACEBOOK */
+    body {
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f0f2f5;
+      color: #1c1e21;
+      padding: 20px;
+      padding-right: 80px;
+      margin: 0;
+      min-height: 100vh;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    .page-section {
+      display: none;
+      width: 100%;
+      max-width: 1800px;
+      margin: 0 auto;
+      flex-direction: column;
+      gap: 20px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .page-section.active-page {
+      display: flex;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .main-layout {
+      display: flex;
+      gap: 20px;
+      width: 100%;
+    }
+
+    .left-col {
+      flex: 1;
+      width: calc(100% - 280px);
+      background: #ffffff;
+      padding: 20px;
+      border-radius: 12px;
+      min-width: 0;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      border: 1px solid #dddfe2;
+    }
+
+    .right-col {
+      width: 260px;
+      min-width: 260px;
+      flex-shrink: 0;
+      background: #ffffff;
+      padding: 20px;
+      border-radius: 12px;
+      height: fit-content;
+      position: sticky;
+      top: 20px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      border: 1px solid #dddfe2;
+    }
+
+    .card {
+      background: #ffffff;
+      padding: 25px;
+      border-radius: 12px;
+      border: 1px solid #dddfe2;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .card-title {
+      color: #1877f2;
+      margin-top: 0;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid #dddfe2;
+      padding-bottom: 10px;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+      font-weight: 800;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+
+    .input-group-col {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      gap: 5px;
+    }
+
+    input,
+    textarea,
+    select {
+      padding: 12px;
+      background: #f5f6f7;
+      border: 1px solid #ccd0d5;
+      color: #1c1e21;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      transition: 0.3s;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      border-color: #1877f2;
+      outline: none;
+      background: #ffffff;
+      box-shadow: 0 0 0 2px rgba(24, 119, 242, 0.2);
+    }
+
+    textarea {
+      height: 42px;
+      resize: vertical;
+    }
+
+    .btn {
+      padding: 10px 15px;
+      cursor: pointer;
+      border-radius: 6px;
+      border: none;
+      font-weight: bold;
+      transition: 0.2s;
+    }
+
+    .btn:hover {
+      opacity: 0.85;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-blue {
+      background: #1877f2;
+      color: white;
+    }
+
+    .btn-green {
+      background: #31a24c;
+      color: white;
+    }
+
+    .btn-purple {
+      background: #7950f2;
+      color: white;
+      white-space: nowrap;
+    }
+
+    .btn-purple:hover {
+      background: #7048e8;
+    }
+
+    .btn-red {
+      background: #fa383e;
+      color: white;
+    }
+
+    .btn-orange {
+      background: #f56b2a;
+      color: white;
+      padding: 12px;
+      font-size: 14px;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+
+    .btn-purple {
+      background: #8a3ab9;
+      color: white;
+      padding: 12px;
+      font-size: 14px;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+
+    .table-wrapper {
+      overflow: auto;
+      max-height: 65vh;
+      padding-bottom: 15px;
+      border-radius: 6px;
+      border: 1px solid #dddfe2;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      padding: 14px 10px;
+      text-align: left;
+      border-bottom: 1px solid #dddfe2;
+      vertical-align: middle;
+      color: #1c1e21;
+    }
+
+    th {
+      color: #606770;
+      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 0.05em;
+      background: #f5f6f7;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 2px solid #1877f2;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    tbody tr {
+      transition: background 0.2s ease;
+      background-color: #ffffff;
+    }
+
+    tbody tr:hover {
+      background-color: #f0f2f5 !important;
+    }
+
+    .billing-item {
+      padding: 12px 0;
+      border-bottom: 1px solid #dddfe2;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .billing-balance {
+      font-weight: bold;
+      font-family: monospace;
+      font-size: 15px;
+      margin-top: 3px;
+      display: block;
+    }
+
+    .btn-nap {
+      background: #e7f3ff;
+      color: #1877f2;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      text-decoration: none;
+      font-size: 11px;
+      font-weight: bold;
+      white-space: nowrap;
+    }
+
+    .btn-nap:hover {
+      background: #dbeafe;
+    }
+
+    .prepay-input {
+      width: 80px;
+      padding: 6px;
+      font-size: 11px;
+      text-align: right;
+    }
+
+    .toggle-btn {
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: none;
+      color: white;
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: bold;
+    }
+
+    .status-active {
+      background: #31a24c;
+    }
+
+    .status-paused {
+      background: #8c939d;
+    }
+
+    .metric {
+      font-family: monospace;
+      font-size: 14px;
+    }
+
+    .sidebar-right {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 70px;
+      height: 100vh;
+      background: #ffffff;
+      border-left: 1px solid #dddfe2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 20px;
+      z-index: 9000;
+      box-shadow: -2px 0 10px rgba(0, 0, 0, 0.05);
+      gap: 15px;
+      overflow-y: auto;
+    }
+
+    .sidebar-icon {
+      width: 45px;
+      height: 45px;
+      min-height: 45px;
+      background: #f0f2f5;
+      border-radius: 10px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      transition: 0.2s;
+      font-size: 22px;
+      position: relative;
+      color: #606770;
+    }
+
+    .sidebar-icon:hover {
+      background: #e4e6eb;
+      transform: scale(1.1);
+    }
+
+    .sidebar-icon.active-icon {
+      background: #1877f2;
+      box-shadow: 0 0 10px rgba(24, 119, 242, 0.4);
+      color: white;
+    }
+
+    .divider {
+      width: 40px;
+      height: 2px;
+      background: #dddfe2;
+      border-radius: 2px;
+      margin: 5px 0;
+      min-height: 2px;
+    }
+
+    .slide-panel {
+      position: fixed;
+      top: 0;
+      right: -500px;
+      width: 450px;
+      height: 100vh;
+      background: #ffffff;
+      border-left: 1px solid #dddfe2;
+      z-index: 8500;
+      transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: -5px 0 20px rgba(0, 0, 0, 0.1);
+      display: flex;
+      flex-direction: column;
+    }
+
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 9999;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .modal-box {
+      background: #ffffff;
+      padding: 25px;
+      border-radius: 12px;
+      width: 450px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      border: 1px solid #dddfe2;
+      position: relative;
+    }
+
+    .modal-title {
+      color: #1877f2;
+      margin-top: 0;
+      font-size: 18px;
+      border-bottom: 1px solid #dddfe2;
+      padding-bottom: 10px;
+      margin-bottom: 20px;
+      font-weight: bold;
+    }
+
+    .close-modal {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      cursor: pointer;
+      font-size: 18px;
+      font-weight: bold;
+      color: #8c939d;
+      transition: 0.2s;
+    }
+
+    .close-modal:hover {
+      color: #fa383e;
+      transform: scale(1.2);
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccd0d5;
+      transition: 0.4s;
+      border-radius: 20px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: 0.4s;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+
+    input:checked+.slider {
+      background-color: #31a24c;
+    }
+
+    input:checked+.slider:before {
+      transform: translateX(20px);
+    }
+
+    input:disabled+.slider {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .inbox-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .inbox-toolbar .btn {
+      min-height: 40px;
+    }
+
+    .inbox-status {
+      margin-left: auto;
+      color: #606770;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    #btn-refresh-inbox[data-live="1"] {
+      background: #e7f5ec;
+      border-color: #34c759;
+      color: #1f7a3a;
+      animation: inbox-pulse 1.6s ease-in-out infinite;
+    }
+
+    @keyframes inbox-pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.45);
+      }
+
+      50% {
+        box-shadow: 0 0 0 6px rgba(52, 199, 89, 0);
+      }
+    }
+
+    .inbox-shell {
+      display: grid;
+      grid-template-columns: 300px minmax(320px, 420px) minmax(420px, 1fr);
+      height: calc(100vh - 210px);
+      min-height: 520px;
+      max-height: 820px;
+      border: 1px solid #dddfe2;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .inbox-column {
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #dddfe2;
+      background: #fff;
+    }
+
+    .inbox-column:last-child {
+      border-right: none;
+    }
+
+    .inbox-column-header {
+      padding: 16px;
+      border-bottom: 1px solid #dddfe2;
+      background: #f7f8fa;
+    }
+
+    .inbox-column-title {
+      margin: 0 0 4px;
+      font-size: 14px;
+      color: #1c1e21;
+      font-weight: 800;
+    }
+
+    .inbox-column-subtitle {
+      margin: 0;
+      font-size: 11px;
+      color: #606770;
+      line-height: 1.5;
+    }
+
+    .inbox-scroll {
+      flex: 1 1 0;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+
+    .inbox-page-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 12px;
+      border-bottom: 1px solid #e4e6eb;
+    }
+
+    .inbox-page-list {
+      padding: 8px;
+    }
+
+    .inbox-page-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .inbox-page-item:hover {
+      background: #f0f2f5;
+    }
+
+    .inbox-page-row-main {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .inbox-page-item input {
+      width: 17px;
+      height: 17px;
+      padding: 0;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .inbox-page-row-main .inbox-page-meta {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .ai-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .ai-on {
+      background: #d3f9d8;
+      color: #2b8a3e;
+    }
+
+    .ai-off {
+      background: #e9ecef;
+      color: #868e96;
+    }
+
+    .ai-config-toggle {
+      border: none;
+      background: #f1f3f5;
+      border-radius: 6px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .ai-config-toggle.open {
+      background: #228be6;
+      color: #fff;
+    }
+
+    .ai-config-panel {
+      margin-top: 8px;
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .ai-config-panel[hidden] {
+      display: none;
+    }
+
+    .ai-config-row label {
+      font-size: 11px;
+      color: #495057;
+      font-weight: 600;
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .ai-config-row textarea,
+    .ai-config-row input[type="text"],
+    .ai-config-row input[type="password"] {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: inherit;
+      box-sizing: border-box;
+    }
+
+    .ai-config-row textarea {
+      resize: vertical;
+      min-height: 50px;
+    }
+
+    .ai-toggle {
+      display: flex !important;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+
+    .ai-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .ai-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .ai-actions button {
+      padding: 5px 10px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .ai-test {
+      background: #fab005;
+      color: #fff;
+    }
+
+    .ai-save {
+      background: #228be6;
+      color: #fff;
+    }
+
+    .ai-status {
+      font-size: 11px;
+      color: #495057;
+    }
+
+    .inbox-page-item.ai-active {
+      border-left: 3px solid #40c057;
+    }
+
+    .inbox-avatar {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #e4e6eb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #1877f2;
+      font-weight: 800;
+    }
+
+    .inbox-avatar-small {
+      width: 32px;
+      height: 32px;
+      font-size: 11px;
+    }
+
+    .inbox-page-meta {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .inbox-page-name {
+      color: #1c1e21;
+      font-size: 13px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .inbox-page-id {
+      color: #8a8d91;
+      font-size: 10px;
+      font-family: monospace;
+      margin-top: 3px;
+    }
+
+    .inbox-selection-summary {
+      padding: 12px;
+      border-top: 1px solid #e4e6eb;
+      background: #f7f8fa;
+      color: #1877f2;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .inbox-search-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .inbox-search-row input {
+      min-width: 0;
+      flex: 1;
+      padding: 9px 10px;
+    }
+
+    .inbox-filter {
+      padding: 9px 6px;
+      font-family: inherit;
+    }
+
+    .inbox-tag-picker {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      margin-top: 10px;
+      padding: 8px;
+      background: #f8fafc;
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+    }
+
+    .inbox-tag-picker-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+      margin-right: 4px;
+    }
+
+    .inbox-tag-chip {
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      opacity: 0.55;
+      transition: all 0.15s ease;
+      user-select: none;
+    }
+
+    .inbox-tag-chip:hover {
+      opacity: 1;
+      transform: translateY(-1px);
+    }
+
+    .inbox-tag-chip-default {
+      background: #f1f5f9;
+      color: #334155;
+      border-color: #e2e8f0;
+    }
+
+    .inbox-tag-chip-clear {
+      background: #fef2f2;
+      color: #b91c1c;
+      border-color: #fecaca;
+    }
+
+    .conversation-tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+
+    .conversation-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e0f2fe;
+      color: #075985;
+      border: 1px solid #bae6fd;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .conversation-tag-remove {
+      cursor: pointer;
+      color: #dc2626;
+      font-weight: 900;
+      margin-left: 2px;
+    }
+
+    .conversation-tag-remove:hover {
+      color: #991b1b;
+    }
+
+    .conversation-item[data-tagged="1"] {
+      border-left: 3px solid #6366f1;
+    }
+
+    .conversation-marketing-btn {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #ecfeff;
+      color: #0e7490;
+      border: 1px solid #a5f3fc;
+      cursor: pointer;
+      margin-top: 4px;
+      display: inline-block;
+      transition: all 0.15s ease;
+    }
+
+    .conversation-marketing-btn:hover {
+      background: #cffafe;
+      transform: translateY(-1px);
+    }
+
+    .conversation-marketing-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .inbox-marketing-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      position: relative;
+    }
+
+    .inbox-marketing-row-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .inbox-marketing-row .row-num {
+      font-weight: 800;
+      color: #0284c7;
+      font-size: 11px;
+      background: #e0f2fe;
+      padding: 2px 7px;
+      border-radius: 999px;
+    }
+
+    .inbox-marketing-row textarea {
+      width: 100%;
+      box-sizing: border-box;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.45;
+      padding: 6px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      resize: vertical;
+      min-height: 58px;
+      max-height: 200px;
+    }
+
+    .inbox-marketing-row textarea:focus {
+      outline: none;
+      border-color: #0284c7;
+      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
+    }
+
+    .inbox-marketing-row-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .inbox-marketing-img-zone {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-mkt-img-upload {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px dashed #94a3b8;
+      background: #f8fafc;
+      color: #475569;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-mkt-img-upload:hover {
+      background: #e0f2fe;
+      border-color: #0284c7;
+      color: #0284c7;
+    }
+
+    .mkt-img-preview-box {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .mkt-img-preview-thumb {
+      width: 38px;
+      height: 38px;
+      object-fit: cover;
+      border-radius: 4px;
+      border: 1px solid #94a3b8;
+      cursor: pointer;
+    }
+
+    .mkt-img-remove-btn {
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      background: #ef4444;
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 15px;
+      height: 15px;
+      font-size: 10px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    .inbox-marketing-row .row-del {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 7px;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+
+    .inbox-marketing-row .row-del:hover {
+      background: #fca5a5;
+    }
+
+    .conversation-item {
+      display: flex;
+      gap: 11px;
+      padding: 13px 14px;
+      border-bottom: 1px solid #f0f2f5;
+      cursor: pointer;
+      transition: background 0.2s;
+      position: relative;
+    }
+
+    .conversation-item:hover {
+      background: #f7f8fa;
+    }
+
+    .conversation-item.active {
+      background: #e7f3ff;
+      box-shadow: inset 3px 0 0 #1877f2;
+    }
+
+    .conversation-main {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .conversation-topline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .conversation-name {
+      min-width: 0;
+      flex: 1;
+      color: #1c1e21;
+      font-size: 13px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conversation-time {
+      color: #8a8d91;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .conversation-preview {
+      color: #606770;
+      font-size: 11px;
+      margin-top: 5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .conversation-page-tag {
+      display: inline-block;
+      max-width: 160px;
+      margin-top: 6px;
+      padding: 2px 6px;
+      border-radius: 10px;
+      background: #f0f2f5;
+      color: #4b4f56;
+      font-size: 9px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: bottom;
+    }
+
+    .conversation-unread {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background: #1877f2;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #dddfe2;
+      min-height: 48px;
+    }
+
+    .chat-header-info {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .chat-header-name {
+      font-size: 14px;
+      font-weight: 800;
+      color: #1c1e21;
+    }
+
+    .chat-header-page {
+      margin-top: 3px;
+      font-size: 11px;
+      color: #606770;
+    }
+
+    .conv-ai-toggle {
+      width: 32px;
+      height: 32px;
+      border: none;
+      border-radius: 50%;
+      background: #f0f2f5;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+
+    .conv-ai-toggle:hover {
+      background: #e4e6eb;
+    }
+
+    .ai-switch {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .ai-switch input {
+      display: none;
+    }
+
+    .ai-switch-slider {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      background: #e4e6eb;
+      border-radius: 11px;
+      transition: background 0.2s;
+    }
+
+    .ai-switch-slider::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .ai-switch input:checked+.ai-switch-slider {
+      background: #31a24c;
+    }
+
+    .ai-switch input:checked+.ai-switch-slider::after {
+      transform: translateX(18px);
+    }
+
+    .ai-switch-text {
+      font-size: 11px;
+      font-weight: 700;
+      color: #606770;
+      white-space: nowrap;
+    }
+
+    .ai-switch input:not(:checked)~.ai-switch-text {
+      color: #c92a2a;
+    }
+
+    .inbox-messages {
+      flex: 1 1 0;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      padding: 18px;
+      background: #f7f8fa;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .message-row {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .message-row.outgoing {
+      align-items: flex-end;
+    }
+
+    .message-bubble {
+      max-width: 72%;
+      padding: 9px 12px;
+      border-radius: 16px;
+      background: #e4e6eb;
+      color: #1c1e21;
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .message-row.outgoing .message-bubble {
+      background: #1877f2;
+      color: #fff;
+    }
+
+    .message-time {
+      margin: 4px 5px 0;
+      color: #8a8d91;
+      font-size: 9px;
+    }
+
+    .inbox-composer {
+      padding: 12px;
+      border-top: 1px solid #dddfe2;
+      background: #fff;
+    }
+
+    .inbox-composer-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    .inbox-composer textarea {
+      flex: 1;
+      min-height: 80px;
+      max-height: 200px;
+      height: 80px;
+      resize: vertical;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 10px;
+    }
+
+    .btn-ai-small {
+      font-size: 11px !important;
+      padding: 4px 8px !important;
+      height: 28px !important;
+      min-height: 0 !important;
+      line-height: 1 !important;
+      width: auto !important;
+      flex: 0 0 auto !important;
+      align-self: flex-end !important;
+    }
+
+    .inbox-empty {
+      min-height: 180px;
+      padding: 30px 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      color: #606770;
+      font-size: 13px;
+      line-height: 1.6;
+      box-sizing: border-box;
+    }
+
+    .inbox-loading {
+      padding: 24px 16px;
+      color: #1877f2;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .inbox-error {
+      margin: 10px 12px;
+      padding: 10px;
+      border: 1px solid #f5c2c7;
+      border-radius: 7px;
+      background: #fff5f5;
+      color: #c92a2a;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 1250px) {
+      .inbox-shell {
+        grid-template-columns: 260px 340px minmax(380px, 1fr);
+      }
+    }
+  </style>
+  <style>
+    .share-page-search-row {
+      display: flex;
+      gap: 8px;
+      margin: 8px 0;
+    }
+
+    .share-page-search-row input {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid #ced0d4;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .share-page-col {
+      background: #f8f9fb;
+      border-radius: 10px;
+      padding: 12px;
+      border: 1px solid #e4e6eb;
+    }
+
+    .share-page-col-header h3 {
+      margin: 0 0 6px;
+      color: #1c1e21;
+      font-size: 14px;
+    }
+
+    .share-page-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .sharepage-page-list {
+      max-height: 380px;
+      overflow-y: auto;
+      border: 1px solid #e4e6eb;
+      border-radius: 8px;
+      background: #fff;
+      padding: 6px;
+    }
+
+    .sharepage-page-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border-bottom: 1px solid #f0f2f5;
+      cursor: pointer;
+    }
+
+    .sharepage-page-item:last-child {
+      border-bottom: none;
+    }
+
+    .sharepage-page-item:hover {
+      background: #f0f7ff;
+    }
+
+    .sharepage-page-item input {
+      transform: scale(1.15);
+      accent-color: #1877f2;
+    }
+
+    .sharepage-page-row-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sharepage-page-name {
+      font-weight: 600;
+      color: #1c1e21;
+      font-size: 13px;
+    }
+
+    .sharepage-page-id {
+      font-size: 11px;
+      color: #65676b;
+    }
+
+    .sharepage-summary {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: #e7f3ff;
+      color: #1877f2;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .sharepage-fb-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 10px;
+    }
+
+    .sharepage-fb-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sharepage-fb-num {
+      background: #1877f2;
+      color: #fff;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: bold;
+      flex-shrink: 0;
+    }
+
+    .sharepage-fb-input {
+      flex: 1;
+      padding: 7px 9px;
+      border: 1px solid #ced0d4;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    .sharepage-log {
+      margin-top: 14px;
+      max-height: 260px;
+      overflow-y: auto;
+      border: 1px solid #e4e6eb;
+      border-radius: 8px;
+      background: #fff;
+      padding: 6px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    .sharepage-log-line {
+      padding: 4px 8px;
+      border-radius: 4px;
+      margin-bottom: 2px;
+    }
+
+    .sharepage-log-line.ok {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .sharepage-log-line.err {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .sharepage-log-line.info {
+      background: #e7f3ff;
+      color: #1877f2;
+    }
+
+    @media (max-width: 900px) {
+      .share-page-shell {
+        grid-template-columns: 1fr !important;
+      }
+
+      .sharepage-fb-list {
+        grid-template-columns: 1fr !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="shareAdActModal" class="modal-overlay">
+    <div class="modal-box" style="width: 500px">
+      <span class="close-modal">✖</span>
+      <h2 class="modal-title">🤝 Gán quyền TKQC cho User BM</h2>
+      <p style="font-size: 13px; color: #4b4f56">
+        TKQC: <strong id="shareTargetActName" style="color: #1877f2"></strong>
+      </p>
+      <div class="input-group-col" style="margin-bottom: 20px">
+        <label style="font-size: 13px; color: #1c1e21; font-weight: bold">Chọn Thành viên trong BM này:</label>
+        <select id="shareBmUserSelect" style="height: auto; min-height: 120px; padding: 10px" multiple></select>
+        <span style="font-size: 11px; color: #8c939d; margin-top: 5px">*Giữ Ctrl (hoặc Cmd) để chọn nhiều người</span>
+      </div>
+      <button id="btn-submit-share-act" class="btn btn-blue" style="width: 100%; padding: 12px">
+        Cấp quyền Quản trị viên (ADMIN)
+      </button>
+    </div>
+  </div>
+
+  <div id="campaignModal" class="modal-overlay" style="z-index: 99999; display: none">
+    <div style="
+          background: #ffffff;
+          width: 95%;
+          height: 90%;
+          border-radius: 10px;
+          border: 1px solid #dddfe2;
+          display: flex;
+          flex-direction: column;
+          box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        ">
+      <div style="
+            padding: 15px 25px;
+            border-bottom: 1px solid #dddfe2;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f5f6f7;
+            border-radius: 10px 10px 0 0;
+          ">
+        <h2 id="campaignModalTitle" style="
+              color: #1877f2;
+              margin: 0;
+              font-size: 18px;
+              font-weight: bold;
+              text-transform: uppercase;
+            ">
+          DANH SÁCH CHIẾN DỊCH
+        </h2>
+        <button class="close-modal-camp" style="
+              background: #fa383e;
+              color: white;
+              border: none;
+              padding: 8px 15px;
+              border-radius: 5px;
+              cursor: pointer;
+              font-weight: bold;
+              transition: 0.2s;
+            ">
+          ĐÓNG (X)
+        </button>
+      </div>
+      <div style="
+            padding: 15px;
+            overflow-y: auto;
+            flex-grow: 1;
+            will-change: transform;
+          ">
+        <table style="
+              width: 100%;
+              color: #1c1e21;
+              border-collapse: collapse;
+              text-align: left;
+            " id="campaignTable">
+          <thead style="background: #f5f6f7; position: sticky; top: -15px">
+            <tr>
+              <th style="padding: 12px 10px">Bật/Tắt</th>
+              <th style="padding: 12px 10px">Tên Chiến Dịch</th>
+              <th style="padding: 12px 10px">Ngân sách</th>
+              <th style="padding: 12px 10px">Chi tiêu</th>
+              <th style="padding: 12px 10px">Kết quả</th>
+              <th style="padding: 12px 10px">Chi phí/KQ</th>
+              <th style="padding: 12px 10px">Tiếp cận</th>
+              <th style="padding: 12px 10px">Hiển thị</th>
+              <th style="padding: 12px 10px">CPM</th>
+              <th style="padding: 12px 10px">Click Link</th>
+              <th style="padding: 12px 10px">Click (All)</th>
+              <th style="padding: 12px 10px">CPC</th>
+              <th style="padding: 12px 10px">CTR</th>
+            </tr>
+          </thead>
+          <tbody id="campaignTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar-right">
+    <div id="nav-dashboard" class="sidebar-icon active-icon" title="Bảng Chỉ Số Vít Camp">
+      📊
+    </div>
+    <div id="nav-accounts" class="sidebar-icon" title="Tổng Quan Tài Khoản">
+      💼
+    </div>
+    <div id="nav-bm" class="sidebar-icon" title="Quản Lý BM (Soi lủng TKQC)">
+      🏢
+    </div>
+    <div id="nav-env" class="sidebar-icon" title="Quản Lý Môi Trường">🛡️</div>
+    <div id="nav-auto" class="sidebar-icon" title="Tự Động Hóa">⚡</div>
+    <div id="nav-spy" class="sidebar-icon" title="Soi Content">👁️</div>
+    <div id="nav-share" class="sidebar-icon" title="Chia Sẻ Quyền API">
+      🤝
+    </div>
+    <div id="nav-inbox" class="sidebar-icon" title="Hộp thư gộp các Page">
+      💬
+    </div>
+    <div id="nav-share-page" class="sidebar-icon" title="Chia sẻ Page cho nhiều FB">
+      📤
+    </div>
+    <div class="divider"></div>
+    <div id="btn-open-paused" class="sidebar-icon" title="Nhóm Đã Tắt">
+      🛑
+    </div>
+    <div id="nav-autopause" class="sidebar-icon" title="Tự Động Tắt Nhóm">
+      ✂️
+    </div>
+  </div>
+
+  <div id="paused-panel" class="slide-panel">
+    <div style="
+          padding: 15px 20px;
+          background: #f5f6f7;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1px solid #dddfe2;
+        ">
+      <h3 style="margin: 0; color: #fa383e; font-size: 16px">
+        🛑 NHÓM TẮT ĐÃ TIÊU TIỀN
+      </h3>
+      <span id="close-paused" style="
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 18px;
+            color: #1c1e21;
+          ">✖</span>
+    </div>
+    <div style="flex: 1; overflow-y: auto; padding: 15px">
+      <table style="width: 100%; border-collapse: collapse">
+        <thead>
+          <tr>
+            <th>HÀNH ĐỘNG</th>
+            <th>NHÓM (VIDEO)</th>
+            <th>TIÊU</th>
+            <th>KQ</th>
+          </tr>
+        </thead>
+        <tbody id="pausedTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="ai-bubble" style="
+        position: fixed;
+        bottom: 20px;
+        right: 90px;
+        width: 60px;
+        height: 60px;
+        background: linear-gradient(45deg, #8a3ab9, #1877f2);
+        border-radius: 50%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        cursor: pointer;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        z-index: 10000;
+        transition: 0.3s;
+      ">
+    <span style="font-size: 30px">🤖</span>
+  </div>
+  <div id="ai-chat-box" style="
+        position: fixed;
+        bottom: 90px;
+        right: 90px;
+        width: 350px;
+        height: 500px;
+        background: #ffffff;
+        border-radius: 12px;
+        display: none;
+        flex-direction: column;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        z-index: 10000;
+        border: 1px solid #dddfe2;
+      ">
+    <div style="
+          padding: 15px;
+          background: #f5f6f7;
+          border-radius: 12px 12px 0 0;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1px solid #dddfe2;
+        ">
+      <strong style="color: #31a24c">💬 TRỢ LÝ META AI (TL_)</strong><span id="close-chat"
+        style="cursor: pointer; font-weight: bold; color: #1c1e21">✖</span>
+    </div>
+    <div id="chat-content" style="
+          flex: 1;
+          overflow-y: auto;
+          padding: 15px;
+          font-size: 13px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        "></div>
+    <div style="
+          padding: 10px;
+          background: #f5f6f7;
+          display: flex;
+          gap: 5px;
+          border-radius: 0 0 12px 12px;
+          border-top: 1px solid #dddfe2;
+        ">
+      <input type="text" id="chat-input" placeholder="Hỏi AI về chiến dịch..." style="flex: 1; padding: 8px" />
+      <button id="send-chat" style="
+            background: #1877f2;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+          ">
+        Gửi
+      </button>
+    </div>
+  </div>
+
+  <div id="page-dashboard" class="page-section active-page">
+    <div class="main-layout">
+      <div class="left-col">
+        <h1 style="
+              margin-top: 0;
+              color: #1877f2;
+              font-size: 20px;
+              font-weight: bold;
+            ">
+          🚀 BẢNG CHỈ SỐ QUẢNG CÁO CHI TIẾT
+        </h1>
+        <div class="input-group">
+          <div class="input-group-col" style="flex: 2">
+            <div style="display: flex; gap: 10px; flex-direction: column">
+              <input type="password" id="tokenInput"
+                placeholder="Access Token (EAAB...) - Bỏ trống nếu Share Page Pro5" />
+              <div style="display: flex; gap: 6px">
+                <button id="autoTokenBtn" class="btn btn-orange" style="margin-bottom: 0; flex: 1">
+                  ⚡ LẤY TOKEN TỰ ĐỘNG
+                </button>
+                <button id="oauthTokenBtn" class="btn btn-green" style="margin-bottom: 0; flex: 1"
+                  title="Mở Facebook OAuth để lấy token có đầy đủ quyền pages_manage_roles">
+                  🔑 LẤY TOKEN ĐẦY ĐỦ QUYỀN
+                </button>
+              </div>
+              <input type="text" id="fbAppIdInput" placeholder="App ID (tùy chọn - mặc định dùng app đã lưu)"
+                style="font-size: 12px; padding: 6px 8px" />
+              <input type="text" id="workerUrlInput" placeholder="URL Worker (vd: https://fb-token-sap.tên.workers.dev)"
+                style="font-size: 12px; padding: 6px 8px" />
+            </div>
+          </div>
+          <div class="input-group-col" style="flex: 3">
+            <textarea id="idInput" placeholder="Nhập ID Tài Khoản (Cách nhau dấu phẩy)"></textarea>
+            <button id="fetchAllActBtn" class="btn btn-purple" style="margin-bottom: 0">
+              ⏬ KÉO TẤT CẢ TKQC CỦA VIA VÀO Ô TRÊN
+            </button>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 15px">
+          <button id="saveBtn" class="btn btn-green" style="flex: 1">
+            💾 LƯU CẤU HÌNH
+          </button>
+          <button id="clearBtn" class="btn btn-red" style="flex: 1">
+            🗑️ XÓA BỘ NHỚ
+          </button>
+        </div>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>BẬT/TẮT</th>
+                <th>TÀI KHOẢN</th>
+                <th>CHIẾN DỊCH</th>
+                <th>NHÓM (VIDEO)</th>
+                <th>KẾT QUẢ</th>
+                <th>GIÁ / KQ</th>
+                <th>CPL (CHAT)</th>
+                <th>NGÂN SÁCH</th>
+                <th>CHI TIÊU</th>
+                <th>QUY TẮC TẮT CAMP</th>
+                <th>TẦN SUẤT</th>
+                <th>TIẾP CẬN</th>
+                <th>HIỂN THỊ</th>
+                <th>CPM</th>
+                <th>CLICK LINK</th>
+                <th>CLICK TỔNG</th>
+                <th>CPC</th>
+                <th>CTR</th>
+              </tr>
+            </thead>
+            <tbody id="resultTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="right-col">
+        <h2 style="
+              margin-top: 0;
+              color: #d97706;
+              font-size: 16px;
+              font-weight: bold;
+              border-bottom: 1px solid #dddfe2;
+              padding-bottom: 10px;
+            ">
+          💳 QUỸ & TRẠNG THÁI
+        </h2>
+        <div style="display: flex; gap: 10px; margin-bottom: 10px">
+          <button id="scanBtn" class="btn btn-blue" style="flex: 1; padding: 10px; font-size: 12px">
+            🔄 QUÉT ĐANG CHẠY
+          </button>
+          <button id="scanPausedBtn" class="btn" style="
+                background: #8c939d;
+                color: white;
+                flex: 1;
+                padding: 10px;
+                font-weight: bold;
+                font-size: 12px;
+              ">
+            🛑 QUÉT ĐÃ TẮT
+          </button>
+        </div>
+        <button id="updateMoneyBtn" class="btn btn-green" style="
+              width: 100%;
+              margin-bottom: 15px;
+              padding: 10px;
+              font-size: 13px;
+              text-transform: uppercase;
+            ">
+          💰 CẬP NHẬT TIỀN NẠP
+        </button>
+
+        <div id="loading" style="
+              display: none;
+              color: #d97706;
+              text-align: center;
+              margin-bottom: 10px;
+              font-weight: bold;
+            ">
+          ⏳ Đang cào dữ liệu...
+        </div>
+        <div id="billingList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="page-accounts" class="page-section">
+    <div class="card">
+      <h2 class="card-title">💼 DANH SÁCH TÀI KHOẢN QUẢNG CÁO CÁ NHÂN</h2>
+
+      <div style="
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+            align-items: center;
+          ">
+        <button id="btn-fetch-smit-accounts" class="btn btn-blue" style="flex: 1">
+          🔄 KÉO TOÀN BỘ TKQC TỪ VIA NÀY
+        </button>
+        <div style="
+              display: flex;
+              align-items: center;
+              background: #f5f6f7;
+              padding: 0 15px;
+              border-radius: 6px;
+              border: 1px solid #ccd0d5;
+              height: 42px;
+            ">
+          <label style="
+                color: #606770;
+                margin-right: 10px;
+                font-size: 13px;
+                font-weight: bold;
+              ">📅 Xem C.Dịch theo:</label>
+          <select id="campaignDatePreset" style="
+                border: none;
+                background: transparent;
+                outline: none;
+                font-weight: bold;
+                color: #1877f2;
+                font-size: 14px;
+                box-shadow: none;
+              ">
+            <option value="today">Hôm nay</option>
+            <option value="yesterday">Hôm qua</option>
+            <option value="last_7d">7 ngày qua</option>
+            <option value="last_30d">30 ngày qua</option>
+            <option value="this_month">Tháng này</option>
+            <option value="last_month">Tháng trước</option>
+            <option value="maximum" selected>Trọn đời</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>TÀI KHOẢN QUẢNG CÁO</th>
+              <th>TRẠNG THÁI</th>
+              <th>QUYỀN SỞ HỮU</th>
+              <th>LOẠI TÀI KHOẢN</th>
+              <th>TIỀN TỆ</th>
+              <th>THAO TÁC</th>
+            </tr>
+          </thead>
+          <tbody id="smitAccountsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="page-bm" class="page-section">
+    <div class="card">
+      <h2 class="card-title">🏢 QUẢN LÝ BUSINESS MANAGER (AGENCY)</h2>
+      <p style="color: #606770; font-size: 13px; margin-bottom: 15px">
+        Quét toàn bộ BM Via đang cầm. Hỗ trợ nhảy thẳng Web Mời thành viên và
+        Soi lủng toàn bộ TKQC nằm trong BM.
+      </p>
+      <button id="btn-fetch-bms" class="btn btn-blue" style="margin-bottom: 15px; padding: 12px">
+        🔄 QUÉT DANH SÁCH BM
+      </button>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>STT</th>
+              <th>TRẠNG THÁI</th>
+              <th>NHẬN DẠNG (ID)</th>
+              <th>TÊN BM</th>
+              <th style="text-align: center">MỨC ĐỘ</th>
+              <th style="text-align: center">QUẢNG CÁO</th>
+              <th style="text-align: center">QTV</th>
+              <th style="text-align: center">XÁC MINH</th>
+              <th style="text-align: right">GIỚI HẠN</th>
+              <th style="text-align: center">TIỀN TỆ</th>
+              <th style="text-align: right">MÚI GIỜ</th>
+              <th style="text-align: right">NGÀY TẠO</th>
+              <th style="text-align: center">THAO TÁC</th>
+            </tr>
+          </thead>
+          <tbody id="bmListBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" id="bmAdAccountsPanel" style="display: none; border-color: #f56b2a; background: #fffaf0">
+      <div style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #dddfe2;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+          ">
+        <h2 class="card-title" style="color: #f56b2a; border: none; margin: 0; padding: 0">
+          📁 DANH SÁCH TKQC TRONG BM
+          <span id="currentBmName" style="color: #1c1e21; font-weight: bold"></span>
+        </h2>
+        <input type="hidden" id="currentBmIdHidden" />
+      </div>
+
+      <div class="table-wrapper" style="background: white">
+        <table>
+          <thead>
+            <tr>
+              <th>TRẠNG THÁI</th>
+              <th>HÀNH ĐỘNG</th>
+              <th>NHẬN DẠNG</th>
+              <th>NGƯỜI SỞ HỮU</th>
+              <th>TÊN TKQC</th>
+              <th style="text-align: right">SỐ DƯ (BALANCE)</th>
+              <th style="text-align: right">GIỚI HẠN</th>
+              <th style="text-align: right">ĐÃ TIÊU</th>
+              <th style="text-align: center">QTV</th>
+              <th style="text-align: center">TIỀN TỆ</th>
+              <th style="text-align: center">LOẠI TK</th>
+              <th style="text-align: center">QUYỀN</th>
+              <th style="text-align: center">THẺ (PAYMENT)</th>
+              <th style="text-align: right">MÚI GIỜ</th>
+              <th style="text-align: right">TẠO TẠI</th>
+            </tr>
+          </thead>
+          <tbody id="bmAdAccountsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="page-env" class="page-section">
+    <div class="card">
+      <h2 class="card-title">🛡️ KIỂM TRA & LÀM SẠCH MÔI TRƯỜNG VIA</h2>
+      <div style="display: flex; gap: 20px">
+        <div style="
+              flex: 1;
+              background: #f5f6f7;
+              padding: 20px;
+              border-radius: 8px;
+              border: 1px solid #dddfe2;
+            ">
+          <h3 style="margin-top: 0; color: #31a24c">
+            1. Check Thông Tin Via Hiện Tại
+          </h3>
+          <button id="btn-check-via" class="btn btn-blue" style="width: 100%; padding: 15px">
+            🔍 KIỂM TRA VIA NGAY
+          </button>
+          <pre id="via-result" style="
+                margin-top: 15px;
+                color: #d97706;
+                white-space: pre-wrap;
+                font-size: 13px;
+                font-weight: bold;
+              "></pre>
+        </div>
+        <div style="
+              flex: 1;
+              background: #f5f6f7;
+              padding: 20px;
+              border-radius: 8px;
+              border: 1px solid #dddfe2;
+            ">
+          <h3 style="margin-top: 0; color: #fa383e">
+            2. Xóa Sạch Cookie & Cache
+          </h3>
+          <button id="btn-clean-cache" class="btn btn-red" style="width: 100%; padding: 15px">
+            🧹 XÓA SẠCH TRÌNH DUYỆT
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="page-auto" class="page-section">
+    <div class="card" style="max-width: 800px; margin: 0 auto">
+      <h2 class="card-title">⚡ CÀI ĐẶT TỰ ĐỘNG HÓA (CẢNH BÁO TELEGRAM)</h2>
+      <div class="input-group-col" style="margin-bottom: 15px">
+        <label style="font-size: 13px; font-weight: bold; color: #1877f2">Bot Token (Lấy từ @BotFather):</label>
+        <input type="text" id="teleBotToken" placeholder="VD: 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
+      </div>
+      <div class="input-group-col" style="margin-bottom: 15px">
+        <label style="font-size: 13px; font-weight: bold; color: #1877f2">Chat ID (Của sếp hoặc Nhóm chat):</label>
+        <input type="text" id="teleChatId" placeholder="VD: 123456789" />
+      </div>
+      <div class="input-group-col" style="margin-bottom: 20px">
+        <label style="font-size: 13px; font-weight: bold; color: #fa383e">🚨 Báo động khi GIÁ/KQ vượt quá (VNĐ):</label>
+        <input type="number" id="teleThreshold" placeholder="VD: 50000" />
+      </div>
+      <div style="
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+          ">
+        <input type="checkbox" id="teleEnable" style="width: 20px; height: 20px; cursor: pointer" />
+        <label for="teleEnable" style="font-weight: bold; cursor: pointer; color: #31a24c">Bật Cảnh báo tự động</label>
+      </div>
+      <button id="btn-save-tele" class="btn btn-green" style="width: 100%; padding: 15px">
+        💾 LƯU CẤU HÌNH AUTOMATION
+      </button>
+    </div>
+  </div>
+
+  <div id="page-spy" class="page-section">
+    <div class="card">
+      <h2 class="card-title">👁️ SOI CONTENT & ĐỐI THỦ</h2>
+      <div style="display: flex; gap: 10px; margin-bottom: 20px">
+        <input type="text" id="spyIdInput" placeholder="Nhập ID Tài khoản (Ví dụ: 123456, 7891011)" style="flex: 4" />
+        <button id="btn-scan-spy" class="btn btn-blue" style="flex: 1">
+          🔍 LẤY CONTENT
+        </button>
+      </div>
+      <div id="spyLoading" style="
+            display: none;
+            color: #d97706;
+            text-align: center;
+            margin-bottom: 10px;
+            font-weight: bold;
+          ">
+        ⏳ Đang bới móc dữ liệu...
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 20px" id="spyGrid"></div>
+    </div>
+  </div>
+
+  <div id="page-share" class="page-section">
+    <div style="display: flex; gap: 20px">
+      <div class="card" style="flex: 1">
+        <h2 class="card-title">👤 SHARE CHO VIA CÁ NHÂN</h2>
+        <div class="input-group-col" style="margin-bottom: 10px">
+          <label style="font-size: 12px; color: #4b4f56; font-weight: bold">Nhập Danh sách ID TKQC (act_):</label>
+          <textarea id="sharePersonalActIds" placeholder="Ví dụ: 12345, 678910"></textarea>
+        </div>
+        <div class="input-group-col" style="margin-bottom: 15px">
+          <label style="font-size: 12px; color: #4b4f56; font-weight: bold">Nhập Danh sách UID FB Nhận quyền:</label>
+          <textarea id="sharePersonalUids" placeholder="Ví dụ: 1000123456789"></textarea>
+        </div>
+        <button id="btn-share-personal" class="btn btn-blue" style="width: 100%">
+          🚀 TIẾN HÀNH SHARE CÁ NHÂN
+        </button>
+        <div id="log-share-personal" style="
+              margin-top: 10px;
+              font-size: 12px;
+              color: #31a24c;
+              white-space: pre-wrap;
+              background: #f5f6f7;
+              padding: 10px;
+              border: 1px solid #dddfe2;
+              border-radius: 6px;
+            ">
+          Chờ lệnh...
+        </div>
+      </div>
+
+      <div class="card" style="flex: 1">
+        <h2 class="card-title">🏢 SHARE VÀO BM BẰNG TAY</h2>
+        <div class="input-group-col" style="margin-bottom: 10px">
+          <label style="font-size: 12px; color: #4b4f56; font-weight: bold">Nhập Danh sách ID TKQC (act_):</label>
+          <textarea id="shareBmActIds" placeholder="Ví dụ: 12345, 678910"></textarea>
+        </div>
+        <div class="input-group-col" style="margin-bottom: 15px">
+          <label style="font-size: 12px; color: #4b4f56; font-weight: bold">Nhập Danh sách ID Thành Viên BM:</label>
+          <textarea id="shareBmUserIds" placeholder="ID User trong BM"></textarea>
+        </div>
+        <button id="btn-share-bm" class="btn btn-orange" style="width: 100%">
+          🚀 TIẾN HÀNH GÁN QUYỀN BM
+        </button>
+        <div id="log-share-bm" style="
+              margin-top: 10px;
+              font-size: 12px;
+              color: #d97706;
+              white-space: pre-wrap;
+              background: #f5f6f7;
+              padding: 10px;
+              border: 1px solid #dddfe2;
+              border-radius: 6px;
+            ">
+          Chờ lệnh...
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 20px; width: 100%; box-sizing: border-box">
+      <h2 class="card-title">
+        🚩 SHARE QUYỀN PAGE PRO5 (TRƯỜNG PHÁI METAMAX)
+      </h2>
+      <div style="display: flex; gap: 20px">
+        <div class="input-group-col" style="flex: 1">
+          <label style="font-size: 12px; color: #1c1e21; font-weight: bold">1. UID Via đang dùng (Admin):</label>
+          <textarea id="shareActorUids" placeholder="Bắt buộc nhập UID của Via này..."></textarea>
+        </div>
+        <div class="input-group-col" style="flex: 1">
+          <label style="font-size: 12px; color: #1c1e21; font-weight: bold">2. Danh sách Page ID:</label>
+          <textarea id="sharePageIds" placeholder="Ví dụ: 61560537222964"></textarea>
+        </div>
+        <div class="input-group-col" style="flex: 1">
+          <label style="font-size: 12px; color: #1c1e21; font-weight: bold">3. UID Sale nhận quyền:</label>
+          <textarea id="sharePageUids" placeholder="Ví dụ: 100053047434261"></textarea>
+        </div>
+        <div class="input-group-col" style="flex: 1">
+          <label style="font-size: 12px; color: #1c1e21; font-weight: bold">4. Chọn Quyền:</label>
+          <select id="sharePageRole" style="
+                height: 42px;
+                background: #f5f6f7;
+                border: 1px solid #ccd0d5;
+                color: #1c1e21;
+                border-radius: 6px;
+              ">
+            <option value="ADMIN">Quản trị viên (Admin)</option>
+            <option value="EDITOR">Biên tập viên (Editor)</option>
+            <option value="ADVERTISER" selected>Nhà quảng cáo</option>
+          </select>
+        </div>
+      </div>
+      <button id="btn-share-page" class="btn btn-purple" style="width: 100%; margin-top: 15px">
+        🚀 TỰ ĐỘNG RẢI LỜI MỜI SHARE PAGE
+      </button>
+      <div id="log-share-page" style="
+            margin-top: 10px;
+            font-size: 12px;
+            color: #1877f2;
+            white-space: pre-wrap;
+            background: #f5f6f7;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #dddfe2;
+          ">
+        Chờ lệnh...
+      </div>
+    </div>
+    <div id="log-share-page" style="
+          margin-top: 10px;
+          font-size: 12px;
+          color: #1877f2;
+          white-space: pre-wrap;
+          background: #f5f6f7;
+          padding: 10px;
+          border-radius: 6px;
+          border: 1px solid #dddfe2;
+        ">
+      Chờ lệnh...
+    </div>
+  </div>
+
+  <div id="page-share-page" class="page-section">
+    <div class="card" style="padding: 18px">
+      <h2 class="card-title">📤 CHIA SẺ PAGE CHO NHIỀU FB CÁ NHÂN</h2>
+      <p style="color: #555; font-size: 13px; margin-bottom: 14px">
+        1. Tích chọn các Page cần chia sẻ quyền quản lý · 2. Dán link/profile
+        FB cá nhân (tối đa 10) · 3. Bấm <b>"📤 Chia sẻ Page"</b> để gửi lời
+        mời quản lý Page tới tất cả FB đã nhập.
+      </p>
+
+      <div class="share-page-shell" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px">
+        <section class="share-page-col">
+          <div class="share-page-col-header">
+            <h3>1. CHỌN PAGE CẦN CHIA SẺ</h3>
+            <div class="share-page-search-row">
+              <input type="text" id="sharepage-page-search" placeholder="🔍 Tìm Page theo tên hoặc ID..." />
+              <button id="btn-load-sharepage-pages" class="btn btn-blue">
+                🔄 TẢI PAGE
+              </button>
+            </div>
+          </div>
+          <div class="share-page-actions">
+            <button class="btn btn-mini" id="btn-sharepage-select-all">
+              ✅ Chọn tất cả
+            </button>
+            <button class="btn btn-mini" id="btn-sharepage-deselect-all">
+              ❌ Bỏ chọn tất cả
+            </button>
+          </div>
+          <div id="sharepage-page-list" class="sharepage-page-list">
+            <div class="inbox-empty">
+              Bấm <b>"🔄 TẢI PAGE"</b> để hiển thị danh sách Page.
+            </div>
+          </div>
+          <div id="sharepage-summary" class="sharepage-summary">
+            Chưa chọn Page nào.
+          </div>
+        </section>
+
+        <section class="share-page-col">
+          <div class="share-page-col-header">
+            <h3>2. NHẬP LINK 10 FB CÁ NHÂN</h3>
+          </div>
+          <div id="sharepage-fb-list" class="sharepage-fb-list">
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">1</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">2</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">3</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">4</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">5</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">6</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">7</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">8</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">9</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+            <div class="sharepage-fb-row">
+              <span class="sharepage-fb-num">10</span>
+              <input type="text" class="sharepage-fb-input" placeholder="https://facebook.com/username hoặc ID số" />
+            </div>
+          </div>
+
+          <div style="margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center">
+            <button id="btn-sharepage-share" class="btn btn-green" style="font-size: 14px; padding: 10px 22px">
+              📤 Chia sẻ Page
+            </button>
+            <button id="btn-sharepage-clear" class="btn btn-blue">
+              🧹 Xóa hết
+            </button>
+            <span id="sharepage-status" class="inbox-status">
+              Sẵn sàng.
+            </span>
+          </div>
+
+          <div id="sharepage-log" class="sharepage-log"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="page-inbox" class="page-section">
+    <div class="card" style="padding: 18px">
+      <div style="
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+          ">
+        <div>
+          <h2 class="card-title" style="margin-bottom: 6px; border-bottom: none; padding-bottom: 0">
+            💬 HỘP THƯ GỘP CÁC PAGE
+          </h2>
+          <p style="
+                color: #606770;
+                font-size: 12px;
+                margin: 0;
+                line-height: 1.5;
+              ">
+            Chọn những Page cần quản lý chung. Hội thoại sẽ được gom vào một
+            danh sách, đồng thời vẫn giữ nhãn Page nguồn để trả lời đúng nơi.
+          </p>
+        </div>
+        <div class="inbox-toolbar">
+          <button id="btn-load-inbox-pages" class="btn btn-blue">
+            🔄 TẢI DANH SÁCH PAGE
+          </button>
+          <button id="btn-refresh-inbox" class="btn btn-green">
+            📥 LÀM MỚI HỘP THƯ
+          </button>
+          <span id="inbox-status" class="inbox-status">Chưa tải Page</span>
+        </div>
+
+        <div class="inbox-toolbar"
+          style="background:#fff7e6;border:1px solid #ffd591;padding:10px;gap:8px;flex-wrap:wrap">
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="inboxAutoReplyChk" /> 🤖 Auto-reply khi không ở tab
+          </label>
+          <input type="text" id="inboxAutoReplyText" placeholder="Câu trả lời tự động (mặc định: cảm ơn đã nhắn tin...)"
+            style="flex:2;font-size:12px;padding:6px" />
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+            📲 Telegram Bot Token:
+            <input type="text" id="inboxTelegramBot" placeholder="123456:ABC..."
+              style="font-size:11px;padding:4px;width:180px" />
+          </label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+            Chat IDs (phẩy):
+            <input type="text" id="inboxTelegramChats" placeholder="123,456"
+              style="font-size:11px;padding:4px;width:120px" />
+          </label>
+          <button id="btn-save-inbox-bg-cfg" class="btn btn-blue" style="font-size:11px;padding:4px 10px">💾
+            Lưu</button>
+        </div>
+
+        <div class="inbox-toolbar"
+          style="background:#f0f9ff;border:1px solid #bae6fd;padding:10px;gap:8px;flex-direction:column;align-items:stretch">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:700">
+              <input type="checkbox" id="inboxMarketingChk" /> 📣 TIẾP THỊ LẠI (Re-marketing)
+            </label>
+            <span style="font-size:11px;color:#0369a1">
+              Mỗi 2 tiếng gửi 1 câu cho khách chưa có tag. Đã gắn tag = dừng auto.
+            </span>
+            <span style="margin-left:auto;font-size:11px;color:#64748b">
+              Đã gửi cho <b id="inbox-marketing-sent-count">0</b>/<b id="inbox-marketing-total-count">0</b> cuộc
+            </span>
+            <button type="button" id="btn-toggle-inbox-marketing" title="Thu gọn / Mở rộng"
+              style="background:#fff;border:1px solid #bae6fd;border-radius:4px;cursor:pointer;font-size:12px;padding:3px 8px;color:#0369a1;font-weight:700">▶</button>
+          </div>
+          <div id="inbox-marketing-body" style="display:flex;flex-direction:column;gap:8px">
+          <div id="inbox-marketing-lang-tabs"
+            style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0 6px 0">
+            <span style="font-size:11px;font-weight:700;color:#0369a1">🌐 Ngôn ngữ mẫu câu:</span>
+            <button type="button" class="btn-mkt-lang" data-lang="vi"
+              style="padding:3px 10px;font-size:11px;border-radius:4px;border:1px solid #0284c7;background:#0284c7;color:#fff;cursor:pointer;font-weight:600">🇻🇳
+              Tiếng Việt</button>
+            <button type="button" class="btn-mkt-lang" data-lang="ja"
+              style="padding:3px 10px;font-size:11px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer;font-weight:600">🇯🇵
+              Tiếng Nhật</button>
+            <button type="button" class="btn-mkt-lang" data-lang="en"
+              style="padding:3px 10px;font-size:11px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer;font-weight:600">🇺🇸
+              Tiếng Anh</button>
+            <button type="button" class="btn-mkt-lang" data-lang="ko"
+              style="padding:3px 10px;font-size:11px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer;font-weight:600">🇰🇷
+              Tiếng Hàn</button>
+            <button type="button" class="btn-mkt-lang" data-lang="th"
+              style="padding:3px 10px;font-size:11px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer;font-weight:600">🇹🇭
+              Tiếng Thái</button>
+            <button type="button" class="btn-mkt-lang" data-lang="id"
+              style="padding:3px 10px;font-size:11px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer;font-weight:600">🇮🇩
+              Tiếng Indonesia</button>
+            <button type="button" class="btn-mkt-lang" data-lang="ms"
+              style="padding:3px 10px;font-size:11px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer;font-weight:600">🇲🇾
+              Tiếng Malaysia</button>
+          </div>
+          <div id="inbox-marketing-rows" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
+          <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end">
+            <button id="btn-add-marketing-row" class="btn btn-blue" style="font-size:11px;padding:4px 10px">➕ Thêm
+              câu</button>
+            <button id="btn-clear-marketing" class="btn"
+              style="font-size:11px;padding:4px 10px;background:#fee2e2;color:#991b1b">🗑 Xoá hết</button>
+            <button id="btn-save-marketing" class="btn btn-blue" style="font-size:11px;padding:4px 10px">💾 Lưu 10
+              câu</button>
+            <select id="inbox-marketing-bulk-msg" style="font-size:11px;padding:4px;max-width:240px"
+              title="Chọn câu để gửi hàng loạt">
+              <option value="">🎲 Tự động theo ngôn ngữ khách (no-repeat)</option>
+            </select>
+            <button id="btn-marketing-bulk-send" class="btn"
+              style="font-size:11px;padding:4px 10px;background:#22c55e;color:#fff;font-weight:700">📣 Gửi ngay</button>
+          </div>
+          <div id="inbox-marketing-bulk-pages"
+            style="margin-top:6px;padding:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;font-size:11px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <b>🏷 Áp dụng cho cả 📣 Gửi ngay &amp; ⏰ Auto (5 phút/lần):</b>
+              <span>
+                <a href="#" id="inbox-marketing-bulk-pages-all"
+                  style="color:#0ea5e9;text-decoration:none;margin-right:8px">Chọn hết</a>
+                <a href="#" id="inbox-marketing-bulk-pages-none" style="color:#64748b;text-decoration:none">Bỏ chọn
+                  hết</a>
+              </span>
+            </div>
+            <div id="inbox-marketing-bulk-pages-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+            <div style="margin-top:4px;color:#64748b;font-size:10px">
+              Bỏ check Page nào → cả auto-tick &amp; gửi hàng loạt đều bỏ qua Page đó.
+            </div>
+          </div>
+          <div id="inbox-marketing-bulk-progress"
+            style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:8px;font-size:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <b>📣 Đang gửi hàng loạt</b>
+              <span id="inbox-marketing-bulk-status">Đang chuẩn bị...</span>
+              <button type="button" id="btn-marketing-bulk-stop"
+                style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:4px;cursor:pointer;font-size:11px;padding:3px 8px">⏹
+                Dừng</button>
+            </div>
+            <div style="height:8px;background:#dcfce7;border-radius:4px;overflow:hidden;margin-bottom:6px">
+              <div id="inbox-marketing-bulk-bar" style="height:100%;background:#22c55e;width:0%;transition:width 0.3s">
+              </div>
+            </div>
+            <div id="inbox-marketing-bulk-log"
+              style="max-height:140px;overflow:auto;background:#fff;border:1px solid #d1fae5;border-radius:4px;padding:6px;font-family:monospace;font-size:11px">
+            </div>
+          </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="inbox-shell">
+      <section class="inbox-column">
+        <div class="inbox-column-header">
+          <h3 class="inbox-column-title">1. CHỌN PAGE</h3>
+          <p class="inbox-column-subtitle">
+            Chọn các Page bạn muốn quản lý hộp thư và auto-reply.
+          </p>
+          <div class="inbox-search-row">
+            <input id="inbox-page-search" type="search" placeholder="Tìm tên hoặc ID Page..." />
+
+          </div>
+          <div class="inbox-search-row">
+
+            <input id="inbox-add-page-id" type="text" placeholder="ID Page cần thêm..."
+              style="flex: 0 0 160px; font-size: 12px; padding: 8px" />
+
+
+            <br> </br>
+            <button id="btn-add-page-manual" class="btn btn-green" style="padding: 8px 12px; font-size: 12px"
+              title="Thêm Page thủ công bằng ID (không cần gọi API)">
+              ➕ Thêm
+            </button>
+          </div>
+        </div>
+        <div class="inbox-page-actions">
+          <button id="btn-select-all-pages" class="btn" style="
+                  background: #e7f3ff;
+                  color: #1877f2;
+                  padding: 8px;
+                  font-size: 11px;
+                ">
+            Chọn tất cả
+          </button>
+          <button id="btn-clear-pages" class="btn" style="
+                  background: #f0f2f5;
+                  color: #606770;
+                  padding: 8px;
+                  font-size: 11px;
+                ">
+            Bỏ chọn
+          </button>
+        </div>
+        <div id="inbox-page-list" class="inbox-page-list inbox-scroll">
+          <div class="inbox-empty">
+            Bấm “Tải danh sách Page” để bắt đầu.
+          </div>
+        </div>
+        <div id="inbox-selection-summary" class="inbox-selection-summary">
+          Đã chọn 0 Page
+        </div>
+      </section>
+
+      <section class="inbox-column">
+        <div class="inbox-column-header">
+          <h3 class="inbox-column-title">2. HỘI THOẠI</h3>
+          <p class="inbox-column-subtitle">
+            Các cuộc trò chuyện mới nhất từ toàn bộ Page đã chọn.
+          </p>
+          <div class="inbox-search-row">
+            <input id="inbox-conversation-search" type="search" placeholder="Tìm theo tên khách hoặc tên Page..." />
+            <select id="inbox-folder-filter" class="inbox-filter" title="Lọc thư mục">
+              <option value="inbox">Hộp thư</option>
+              <option value="other">Khác</option>
+            </select>
+            <select id="inbox-tag-filter" class="inbox-filter" title="Lọc theo tag">
+              <option value="">— Tất cả tag —</option>
+              <option value="__none__">⚪ Chưa gắn tag</option>
+            </select>
+          </div>
+          <div class="inbox-tag-picker" id="inbox-tag-picker-title">
+            <span class="inbox-tag-picker-label">🏷️ Gắn nhanh:</span>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="đã mua hàng">✅ Đã mua
+              hàng</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="🇯🇵 Tiếng Nhật">🇯🇵 Tiếng
+              Nhật</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="🇻🇳 Tiếng Việt">🇻🇳 Tiếng
+              Việt</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="🇺🇸 Tiếng Anh">🇺🇸 Tiếng
+              Anh</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="🇰🇷 Tiếng Hàn">🇰🇷 Tiếng
+              Hàn</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="🇹🇭 Tiếng Thái">🇹🇭 Tiếng
+              Thái</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="🇮🇩 Tiếng Indonesia">🇮🇩
+              Tiếng
+              Indonesia</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="🇲🇾 Tiếng Malaysia">🇲🇾
+              Tiếng
+              Malaysia</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="câu hỏi">❓ Câu hỏi</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="đã gửi hàng">📦 Đã gửi
+              hàng</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="thiếu thông tin">⚠️ Thiếu
+              thông tin</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="đã thanh toán">💰 Đã thanh
+              toán</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-default" data-tag="chưa thanh toán">⏳ Chưa thanh
+              toán</button>
+            <button type="button" class="inbox-tag-chip inbox-tag-chip-clear" data-tag="__clear__">🗑 Bỏ tag</button>
+          </div>
+        </div>
+        <div id="inbox-conversation-list" class="inbox-scroll">
+          <div class="inbox-empty">
+            Chọn Page rồi bấm “Làm mới hộp thư”.
+          </div>
+        </div>
+      </section>
+
+      <section class="inbox-column">
+        <div id="inbox-chat-header" class="chat-header">
+          <div class="inbox-empty" style="width: 100%; min-height: auto; padding: 0">
+            Chọn một hội thoại để xem tin nhắn.
+          </div>
+        </div>
+        <div id="inbox-chat-ad-banner" style="display:none;"></div>
+        <div id="inbox-messages" class="inbox-messages">
+          <div class="inbox-empty" style="width: 100%; min-height: 100%">
+            Tin nhắn của hội thoại được chọn sẽ hiển thị ở đây.
+          </div>
+        </div>
+        <div class="inbox-composer">
+          <div class="inbox-composer-row">
+            <textarea id="inbox-reply-input" placeholder="Nhập nội dung trả lời... (Enter gửi, Shift+Enter xuống dòng)"
+              disabled></textarea>
+            <button id="btn-send-inbox-reply" class="btn btn-blue" disabled>
+              GỬI
+            </button>
+            <button id="btn-ai-inbox-reply" class="btn btn-purple btn-ai-small"
+              title="Gửi reply bằng AI cho hội thoại đang chọn">
+              AI
+            </button>
+          </div>
+          <div style="color: #8a8d91; font-size: 10px; margin-top: 6px">
+            Chỉ gửi được trong cửa sổ phản hồi 24 giờ của Meta và khi Page
+            Token có quyền nhắn tin.
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+  </div>
+
+  <div id="page-autopause" class="page-section">
+    <div class="card">
+      <h2 class="card-title">
+        ✂️ QUY TẮC TỰ ĐỘNG TẮT NHÓM QUẢNG CÁO (AUTO-PAUSE)
+      </h2>
+      <div style="display: flex; gap: 20px; margin-bottom: 15px">
+        <div class="input-group-col" style="flex: 1">
+          <label style="font-size: 13px; font-weight: bold; color: #d97706">1. Nếu Tổng chi tiêu > (VNĐ):</label>
+          <input type="number" id="apMaxSpend" value="10000" placeholder="Ví dụ: 10000" />
+        </div>
+        <div class="input-group-col" style="flex: 1">
+          <label style="font-size: 13px; font-weight: bold; color: #0e7490">2. Hoặc Giá / Kết quả (CPR/CPL/CPC) > (VNĐ):</label>
+          <input type="number" id="apMaxPrice" value="12000" placeholder="Ví dụ: 12000" />
+        </div>
+        <div class="input-group-col" style="flex: 1">
+          <label style="font-size: 13px; font-weight: bold; color: #8a3ab9">3. VÀ CPM > (VNĐ):</label>
+          <input type="number" id="apMaxCpm" value="50000" placeholder="Ví dụ: 60000" />
+        </div>
+      </div>
+
+      <div
+        style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px;margin-bottom:15px;display:flex;align-items:center;gap:15px;flex-wrap:wrap">
+        <label
+          style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:bold;color:#0369a1;font-size:13px">
+          <input type="checkbox" id="apUseCpl" style="width:18px;height:18px;accent-color:#1877f2" />
+          📣 Sử dụng CPL (Chi phí / Hội thoại mới) thay cho CPR
+        </label>
+        <label
+          style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:bold;color:#0e7490;font-size:13px">
+          <input type="checkbox" id="apUseCpc" style="width:18px;height:18px;accent-color:#0e7490" />
+          🖱️ Sử dụng CPC (Chi phí / Click Link) thay cho CPR
+        </label>
+        <span style="font-size:11px;color:#64748b;flex:1">
+          💡 Đếm hội thoại Inbox theo tag <b>[N1], [N2]...</b>, tự động <b>NÂNG NGƯỠNG CHI TIÊU (+MaxSpend)</b> khi có
+          khách mới & Tắt nhóm theo giá CPL/CPC chuẩn xác.
+        </span>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-bottom: 15px">
+        <button id="btn-fetch-ap-adsets" class="btn btn-blue" style="flex: 1; padding: 12px; font-size: 14px">
+          🔄 1. TẢI DANH SÁCH NHÓM ĐANG CHẠY
+        </button>
+        <button id="btn-start-ap" class="btn btn-green" style="flex: 1; padding: 12px; font-size: 14px">
+          🚀 2. LƯU & BẮT ĐẦU GIÁM SÁT
+        </button>
+        <button id="btn-stop-ap" class="btn btn-red" style="flex: 1; padding: 12px; font-size: 14px; display: none">
+          🛑 ĐANG GIÁM SÁT (BẤM ĐỂ DỪNG)
+        </button>
+      </div>
+
+      <div id="apLoading" style="
+            display: none;
+            color: #1877f2;
+            text-align: center;
+            font-weight: bold;
+            margin-bottom: 10px;
+          ">
+        ⏳ Đang tải danh sách nhóm...
+      </div>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 40px; text-align: center">
+                <input type="checkbox" id="apSelectAll" style="cursor: pointer; width: 16px; height: 16px" />
+              </th>
+              <th>TÀI KHOẢN</th>
+              <th>CHIẾN DỊCH</th>
+              <th>NHÓM QUẢNG CÁO</th>
+              <th>CHI TIÊU H.NAY</th>
+              <th>CHI PHÍ / KQ</th>
+              <th>CPL (INBOX)</th>
+              <!-- <th>CPC (CLICK)</th> -->
+              <th>CPM</th>
+              <th>QUY TẮC TẮT</th>
+              <th style="width: 250px">
+                CẤU HÌNH RIÊNG (TIỀN | GIÁ MESS | CPM)
+              </th>
+            </tr>
+          </thead>
+          <tbody id="apTableBody">
+            <tr>
+              <td colspan="6" style="text-align: center; color: #606770; padding: 20px">
+                Vui lòng bấm "Tải danh sách" trước...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+
+</html>

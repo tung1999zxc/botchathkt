@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Ads Manager Pro TL_",
+  "version": "10.0",
+  "key": "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDix2cNAjUk6pVPVHZpQzy8Ak2Cw5fVrv1Q/Z05Kd5OjCnpP/5sM6MSsTwpXIJzfXcZWKAwYa+E2sKgAS8UHC27iSMdZzbRV0fpwdmqicjTy9zr/LgyfBp2axkOF93PuSYXeNSel6tn7jeeaLmRpi83r+R9RTtJ7Pg+RV3auept6ZEAYTVm4EQsINKaZDxhnImLJMooGfzGB++Xwb2/SBkbdIbeVTm54bL0kZxZD8vbQIVBrSCW7f1Ftu0tZvWLxsnNRcaZblpYTtOV1guZTuI5vm8BmmjPkcrYXIOM2BTB+BXjQEAF31ogRkq4SYGMzqvsfo6HY2u1lv8GuZr8/UMtAgMBAAECggEABNlomqdw0dA2HT+KZHDVdgafPyFNBnrh8Xt4LeuwN/r8hcabQoljd3fp+CSsGo0b/VwJoGuqxaeNbtvnnzNMKmJFYnQvR9d3VpZ03EDAVjlLs8qTzmrHR6NL21wDn3+Lws7XB0x3vqwFwo47gSj4nkichwM5lZwnNv8ALGLIkltmoDLLpm95BDxp0rpo+tFG/eef0QmtfnLHUmcjAnmvWEqf4uH7JKJA2wQiU+WSmEXS5X9V85kZqAMamVO2yoCZLwnju/pFUMw/0UMfO9WVpjUGskzJmKzc6AmerRGpqUT3jDjSUMW2X/Wnpuqbghh49DT2TXNC+2+Js3fQsIGuEQKBgQD/wS1GL4EqPbD+BYEkEdHDQsHj+f2PKyVoxl+aBzj0dzRnE+7+fQ1Skgr2SzqZS2HFxNHXOS8VUFnuuTZQUjIlUM7xXh3bqAe9CvWFAoCLkZG+sVClLnrb5RR4yIhz6nlS51A3VDUZa1Q87zghz3TJF9hqq3f88ZAHFiDcLhoLCQKBgQDi/xuvvrY/GSe70DQ52h9EPCgBsai3qs8frzsDGdtQ+arODU2i75tnY5K72QReug17bEBlmgokdFOD3uL596Jw77gj9XXUOBh0Rf++Z5EVjPwVhw2hyk+MSwWe4eyBPbgyJgR/OS9oIiZcJoe9z6R9btzzht9Opla2RuNExcmsBQKBgEOmHkqdUCYTMVjPrewTho+GffDGdEpFWFzRdAIy/N61FTharnHENBzuIlYpafOYW+FLAVJTft+9ZDxf4zz1sOvr5wEzKuSqGnnnhy/KjKPeOlXdYv5+P+MgQfz81hMLJ1JFexNXg8AYgqynfgp7bGGwm/8DIfbXEoi9Uq3Kx/q5AoGBAJMI8hMlsoEutykV1S6AFm6plLR8MrA9yQpaBByfHAvYnQX5YgefswcGXZ6mFQmS9Ha1CQWHAPjaDNrHfjiyahtDfAB218sORvDSArV/+l9+Qi9jmrXpCRvz4IEpEHwq0WxSaelKzmVicXyRTK3rmT3SmPZ5r54Pau2I/1+lyltNAoGBALfs5YCoNwh7NQXBVbSrviyfRrh2dNhZZ4lRm7TJ8j9Olxkf4IhVC0dH1UivnkMQeRollLg2jrJHmi8kyFjKXYf2Fgs7BdMw9xnHjndYjCdBnJwZ6CYvGCcsJ3JPNsyC0VZ8fSkNDOkw3V1+KtiXWQDHcYyrbJVtVSBv0o1oaF9O",
+  "description": "Công cụ phân tích và quản lý quỹ tài khoản quảng cáo Facebook chuyên nghiệp.",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "cookies",
+    "browsingData",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://*.facebook.com/*",
+    "https://*.google.com/*",
+    "https://*.googleapis.com/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*",
+    "https://api.telegram.org/*",
+    "https://api.openai.com/*",
+    "https://*.workers.dev/*"
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    },
+    "default_title": "Mở Ads Manager Pro TL_"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://business.facebook.com/latest/inbox/*",
+        "https://business.facebook.com/inbox/*",
+        "https://www.facebook.com/messages/*"
+      ],
+      "js": ["content_inbox.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

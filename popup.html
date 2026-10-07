@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1a202c; color: white; width: 500px; padding: 15px; margin: 0; }
+        h2 { color: #63b3ed; text-align: center; margin-top: 0; }
+        label { font-size: 13px; font-weight: bold; margin-bottom: 5px; display: block; }
+        input, textarea { width: 100%; padding: 10px; margin-bottom: 15px; background: #2d3748; border: 1px solid #4a5568; color: white; border-radius: 5px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #3182ce; color: white; font-weight: bold; border: none; border-radius: 5px; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #2b6cb0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        th, td { padding: 10px; border-bottom: 1px solid #4a5568; text-align: left; }
+        th { background: #2d3748; color: #a0aec0; }
+        .text-red { color: #fc8181; }
+        .text-green { color: #68d391; background: rgba(104, 211, 145, 0.2); padding: 2px 6px; border-radius: 4px; }
+        .text-yellow { color: #f6e05e; }
+        #loading { display: none; text-align: center; color: #f6e05e; margin: 10px 0; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>🚀 Bảng Điều Khiển Camp</h2>
+    
+    <label>Access Token (EAAB...)</label>
+    <input type="password" id="tokenInput" placeholder="Dán Token vào đây...">
+    
+    <label>Danh sách ID (Cách nhau bằng dấu phẩy)</label>
+    <textarea id="idInput" rows="2" placeholder="Ví dụ: act_123456789"></textarea>
+    
+    <button id="scanBtn">QUÉT CAMP ĐANG CHẠY</button>
+    <div id="loading">⏳ Đang móc data... đợi tí!</div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID Tài Khoản</th>
+                <th>Tên Camp</th>
+                <th>Trạng Thái</th>
+                <th>Ngân Sách</th>
+            </tr>
+        </thead>
+        <tbody id="resultTableBody"></tbody>
+    </table>
+
+    <script src="popup.js"></script>
+</body>
+</html>

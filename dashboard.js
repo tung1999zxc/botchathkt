@@ -3,23 +3,23 @@
 // ==========================================
 
 // 1. KHÓA CHẾT ID EXTENSION (Lấy từ manifest.json đã đóng gói)
-const MY_EXTENSION_ID = "iabhpambdbhllaipnadmepceiagjlehk";
+// const MY_EXTENSION_ID = "iabhpambdbhllaipnadmepceiagjlehk";
 
-if (
-  typeof chrome !== "undefined" &&
-  chrome.runtime &&
-  chrome.runtime.id !== MY_EXTENSION_ID
-) {
-  window.fetch = function () {
-    return Promise.reject("Bản quyền không hợp lệ!");
-  };
-  alert("🚨 PHÁT HIỆN SAO CHÉP CODE 🚨\nSai ID Extension! Tool sẽ tự hủy.");
-  window.onload = function () {
-    document.body.innerHTML =
-      "<div style='display:flex; height:100vh; width:100vw; background:#f0f2f5; color:#c92a2a; justify-content:center; align-items:center; font-family:monospace; font-size:25px; font-weight:bold; text-align:center;'>🚨 PHÁT HIỆN SAO CHÉP CODE 🚨<br><br>VUI LÒNG MUA BẢN QUYỀN ĐỂ SỬ DỤNG TOOL!</div>";
-  };
-  throw new Error("Unauthorized execution environment.");
-}
+// if (
+//   typeof chrome !== "undefined" &&
+//   chrome.runtime &&
+//   chrome.runtime.id !== MY_EXTENSION_ID
+// ) {
+//   window.fetch = function () {
+//     return Promise.reject("Bản quyền không hợp lệ!");
+//   };
+//   alert("🚨 PHÁT HIỆN SAO CHÉP CODE 🚨\nSai ID Extension! Tool sẽ tự hủy.");
+//   window.onload = function () {
+//     document.body.innerHTML =
+//       "<div style='display:flex; height:100vh; width:100vw; background:#f0f2f5; color:#c92a2a; justify-content:center; align-items:center; font-family:monospace; font-size:25px; font-weight:bold; text-align:center;'>🚨 PHÁT HIỆN SAO CHÉP CODE 🚨<br><br>VUI LÒNG MUA BẢN QUYỀN ĐỂ SỬ DỤNG TOOL!</div>";
+//   };
+//   throw new Error("Unauthorized execution environment.");
+// }
 
 // 2. VÒNG LẶP TỬ THẦN (CHỐNG SOI CODE BẰNG F12)
 // (function() {

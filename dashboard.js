@@ -1414,7 +1414,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 let clickLink = insights.inline_link_clicks || 0;
 
-                // --- Đếm CPL từ Inbox (theo tag [N1], [N2]...) nếu đang bật CPL hoặc có tag ---
+                // --- Đếm CPL từ Inbox (theo tag [N1], [N2]...) ---
+                // Dùng hàm chuẩn countInboxConversationsByTag (giống bảng Auto-Pause)
                 let inboxCount = null;
                 try {
                   inboxCount = await window.countInboxConversationsByTag(
@@ -1476,7 +1477,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                   // Xác định ngưỡng giá sử dụng để nâng MaxSpend
                   // Dùng chung 1 giá trị (maxPrice) cho cả CPR/CPL/CPC
-                  const raisePriceUnit = currentMaxPrice;
+                  const raisePriceUnit = currentMaxCpr;
 
                   // Tính MaxSpend mới = Ngưỡng cũ + (Ngưỡng giá * số KQ tăng thêm)
                   const newMaxSpend = currentMaxSpend + raisePriceUnit * diff;
@@ -1485,7 +1486,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                   window.localConfigs[adset.id] = {
                     ...local,
                     maxSpend: newMaxSpend,
-                    maxPrice: currentMaxPrice,
+                    maxPrice: currentMaxCpr,
                     maxCpm: local.maxCpm || globalMaxCpm,
                     originalMaxSpend: local.originalMaxSpend || globalMaxSpend,
                     originalMaxPrice: local.originalMaxPrice || globalMaxPrice,
@@ -1660,7 +1661,29 @@ document.addEventListener("DOMContentLoaded", async () => {
                     cplCellDisplay = `<span style="font-weight:bold; font-family:monospace; color:#fa383e;">0 đ</span><br><small style="color:#8c939d;">(0 HT)</small>`;
                   }
 
-                  tableBody.innerHTML += `<tr>${actionButton}<td style="font-size:11px; color:#606770">${accountName}</td><td style="color:#1877f2; font-size:12px; font-weight:bold;">${adset.campaign?.name || "N/A"}</td><td style="font-weight:bold; font-size:13px;">${adset.name} <a href="${editAdsetUrl}" target="_blank" title="Mở trong Trình Quản Lý Quảng Cáo" style="text-decoration:none;">👁️</a></td><td data-cpc-row="${adset.id}" class="metric" style="color:#0e7490; font-weight:bold;">${cpcDisplay}</td><td>${hieuQuaHtml}</td><td class="metric" style="color:#fa383e; font-weight:bold;">${pricePerMess}</td><td class="metric" style="color:#4b4f56">${budgetStr}</td><td class="metric" style="color:#d97706; font-weight:bold;">${spendStr}</td>${configCol}<td class="metric" style="color:#4b4f56">${freq}</td><td class="metric">${parseInt(insights.reach || 0).toLocaleString("vi-VN")}</td><td class="metric">${parseInt(insights.impressions || 0).toLocaleString("vi-VN")}</td><td class="metric">${Math.round(insights.cpm || 0).toLocaleString("vi-VN")} đ</td><td class="metric" style="color:#1877f2; font-weight:bold">${clickLink}</td><td class="metric">${insights.clicks || 0}</td><td class="metric">${Math.round(insights.cpc || 0).toLocaleString("vi-VN")} đ</td><td class="metric" style="color:#8a3ab9">${insights.ctr ? parseFloat(insights.ctr).toFixed(2).replace(".", ",") : 0}%</td></tr>`;
+                  tableBody.innerHTML += `
+        <tr>
+            ${actionButton}
+            <td style="font-size:11px; color:#606770">${accountName}</td>
+            <td style="color:#1877f2; font-size:12px; font-weight:bold;">${adset.campaign?.name || "N/A"}</td>
+            <td style="font-weight:bold; font-size:13px;">${adset.name} <a href="${editAdsetUrl}" target="_blank" title="Mở trong Trình Quản Lý Quảng Cáo" style="text-decoration:none;">👁️</a></td>
+            <td data-cpc-row="${adset.id}" class="metric" style="color:#0e7490; font-weight:bold;">${cpcDisplay}</td>
+            <td>${hieuQuaHtml}</td>
+            <td class="metric" style="color:#fa383e; font-weight:bold;">${pricePerMess}</td>
+            <td data-cpl="${adset.id}" style="font-size:11px; text-align:center;">${cplCellDisplay}</td>
+            <td class="metric" style="color:#4b4f56">${budgetStr}</td>
+            <td class="metric" style="color:#d97706; font-weight:bold;">${spendStr}</td>
+            ${configCol}
+            <td class="metric" style="color:#4b4f56">${freq}</td>
+            <td class="metric">${parseInt(insights.reach || 0).toLocaleString("vi-VN")}</td>
+            <td class="metric">${parseInt(insights.impressions || 0).toLocaleString("vi-VN")}</td>
+            <td class="metric">${Math.round(insights.cpm || 0).toLocaleString("vi-VN")} đ</td>
+            <td class="metric" style="color:#1877f2; font-weight:bold">${clickLink}</td>
+            <td class="metric">${insights.clicks || 0}</td>
+            <td class="metric">${Math.round(insights.cpc || 0).toLocaleString("vi-VN")} đ</td>
+            <td class="metric" style="color:#8a3ab9">${insights.ctr ? parseFloat(insights.ctr).toFixed(2).replace(".", ",") : 0}%</td>
+        </tr>
+    `;
                 } else {
                   pausedTableBody.innerHTML += `<tr>${actionButton}<td style="font-size:12px; font-weight:bold;">${adset.name}</td><td class="metric" style="color:#d97706">${spendStr}</td><td><span style="color:#31a24c; font-weight:bold;">${effectiveCount}</span></td>${configCol}</tr>`;
                 }
@@ -2036,32 +2059,35 @@ document.addEventListener("DOMContentLoaded", async () => {
       `✅ Đã lưu cấu hình!\nHệ thống đang giám sát ${window.autoPauseConfig.adsetIds.length} nhóm.\nChế độ giá: ${modeText}\nSẽ tự động tắt khi:\nTiêu > ${window.autoPauseConfig.maxSpend.toLocaleString()}đ VÀ Giá > ${priceLimitText} VÀ CPM > ${window.autoPauseConfig.maxCpm.toLocaleString()}đ`,
     );
 
-    // Nếu dùng CPL, bắt đầu interval poll inbox định kỳ
+    // Nếu dùng CPL/CPC, bắt đầu interval poll inbox định kỳ
     if (window.autoPauseConfig.useCpl || window.autoPauseConfig.useCpc) {
       if (window.apInboxPollInterval) clearInterval(window.apInboxPollInterval);
 
-      // Poll inbox ngay lập tức
+      // Poll inbox ngay lập tức (1 lần khi bật)
       chrome.runtime?.sendMessage?.({ type: "inbox-poll-now" }, () => {
         void chrome.runtime?.lastError;
       });
 
-      // Poll inbox mỗi 2 phút để cập nhật cache mới nhất
-      window.apInboxPollInterval = setInterval(
-        () => {
-          if (
-            window.autoPauseConfig?.isRunning &&
-            (window.autoPauseConfig?.useCpl || window.autoPauseConfig?.useCpc)
-          ) {
-            chrome.runtime?.sendMessage?.({ type: "inbox-poll-now" }, () => {
-              void chrome.runtime?.lastError;
-            });
-            console.log(
-              `🔄 [AUTO-PAUSE] Đang poll inbox để cập nhật CPL/CPC...`,
-            );
-          }
-        },
-        2 * 60 * 1000,
-      ); // 2 phút
+      // ❌ TẮT setInterval riêng của AutoPause
+      // Lý do: background.js alarm 1 phút đã poll đủ để giữ cache mới.
+      // countInboxConversationsByTag() đọc từ inboxBgCache (background poll).
+      // Tiết kiệm 30 batch calls/giờ = -33% API usage.
+      // AutoPause vẫn hoạt động vì CPL đọc từ cache, không cần poll riêng.
+      //
+      // Nếu muốn poll nhanh hơn cho CPL (2 phút), bỏ comment dưới:
+      // window.apInboxPollInterval = setInterval(
+      //   () => {
+      //     if (
+      //       window.autoPauseConfig?.isRunning &&
+      //       (window.autoPauseConfig?.useCpl || window.autoPauseConfig?.useCpc)
+      //     ) {
+      //       chrome.runtime?.sendMessage?.({ type: "inbox-poll-now" }, () => {
+      //         void chrome.runtime?.lastError;
+      //       });
+      //     }
+      //   },
+      //   2 * 60 * 1000,
+      // );
     }
   });
 
@@ -3221,8 +3247,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function inboxSendAiReply({ conversation, page, aiReply, images }) {
-    const token =
+    // Ưu tiên conversation.__pageToken (đã gán khi load conversations).
+    // Nếu rỗng thì tự trao đổi User Token -> Page Token.
+    let token =
       conversation.__pageToken || page?.access_token || page?.accessToken;
+    if (!token && page) {
+      try {
+        token = await inboxResolvePageToken(page);
+        if (token) conversation.__pageToken = token;
+      } catch (e) {}
+    }
     if (!token) {
       console.error("❌ Không có token để gửi reply");
       return false;
@@ -4897,6 +4931,95 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
     }
   }
 
+  /**
+   * Trao đổi User Access Token (EAAB...) thành Page Access Token cho 1 page cụ thể.
+   * Endpoint: GET /{page-id}?fields=access_token&access_token={user_token}
+   * - Có cache theo pageId để tránh gọi lại nhiều lần (gây rate limit 368)
+   * - Có backoff khi Meta trả về 368 (Temporarily blocked)
+   * - Tự fallback: nếu me/accounts không trả access_token thì gọi endpoint này để lấy
+   */
+  const _pageTokenCache = new Map(); // pageId -> { token, expiresAt }
+  const _pageTokenInflight = new Map(); // pageId -> Promise
+  const _pageTokenBlockedUntil = new Map(); // pageId -> timestamp hết block
+
+  async function inboxExchangePageToken(pageId, userToken, attempt = 0) {
+    if (!pageId || !userToken) return "";
+    const cached = _pageTokenCache.get(String(pageId));
+    if (cached && cached.expiresAt > Date.now() + 60_000) {
+      return cached.token;
+    }
+    // Nếu đang bị Meta block cho page này thì trả cache cũ (nếu có) hoặc chuỗi rỗng
+    const blockedUntil = _pageTokenBlockedUntil.get(String(pageId)) || 0;
+    if (blockedUntil > Date.now()) {
+      return cached?.token || "";
+    }
+    // Dedupe nếu đang có 1 promise trao đổi cho page này
+    const inflightKey = String(pageId);
+    if (_pageTokenInflight.has(inflightKey)) {
+      return _pageTokenInflight.get(inflightKey);
+    }
+    const p = (async () => {
+      try {
+        const url = `https://graph.facebook.com/${INBOX_GRAPH_VERSION}/${encodeURIComponent(pageId)}?fields=access_token&access_token=${encodeURIComponent(userToken)}`;
+        const res = await fetch(url);
+        const data = await res.json().catch(() => ({}));
+        if (data?.error) {
+          const code = data.error.code;
+          if (code === 368) {
+            // Rate limit - backoff 60s * 2^attempt, tối đa 10 phút
+            const wait = Math.min(60_000 * Math.pow(2, attempt), 10 * 60_000);
+            _pageTokenBlockedUntil.set(String(pageId), Date.now() + wait);
+            console.warn(
+              `[Inbox] Page ${pageId} bị Meta rate limit khi trao đổi Page Token, đợi ${Math.round(wait / 1000)}s`,
+            );
+            if (attempt < 4) {
+              await new Promise((r) => setTimeout(r, wait));
+              return inboxExchangePageToken(pageId, userToken, attempt + 1);
+            }
+            return cached?.token || "";
+          }
+          // Lỗi khác (thiếu scope, token invalid...) -> trả cache cũ
+          console.warn(
+            `[Inbox] Không trao đổi được Page Token cho ${pageId}:`,
+            data.error.message,
+          );
+          return cached?.token || "";
+        }
+        const pageToken = data?.access_token || "";
+        if (pageToken) {
+          // Cache 50 phút (Page Token từ User Token live ~1 giờ, để an toàn cache 50p)
+          _pageTokenCache.set(String(pageId), {
+            token: pageToken,
+            expiresAt: Date.now() + 50 * 60 * 1000,
+          });
+        }
+        return pageToken || cached?.token || "";
+      } catch (e) {
+        console.warn(`[Inbox] Lỗi mạng khi trao đổi Page Token ${pageId}:`, e);
+        return cached?.token || "";
+      } finally {
+        _pageTokenInflight.delete(inflightKey);
+      }
+    })();
+    _pageTokenInflight.set(inflightKey, p);
+    return p;
+  }
+
+  /**
+   * Lấy accessToken hiệu lực cho 1 page trong Inbox:
+   *   1) Ưu tiên page.accessToken (lấy từ me/accounts - thường là Page Token)
+   *   2) Nếu rỗng, dùng User Token (từ ô tokenInput) gọi inboxExchangePageToken
+   *      để trao đổi thành Page Token (có cache + backoff 368)
+   *   3) Trả về chuỗi rỗng nếu không lấy được -> caller sẽ bỏ qua page đó
+   */
+  async function inboxResolvePageToken(page) {
+    if (!page) return "";
+    if (page.accessToken) return page.accessToken;
+    const userToken = document.getElementById("tokenInput")?.value.trim() || "";
+    if (!userToken) return "";
+    return await inboxExchangePageToken(page.id, userToken);
+  }
+
   async function inboxLoadPages() {
     const token = document.getElementById("tokenInput")?.value.trim();
     if (!token)
@@ -4939,6 +5062,10 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       } catch (err) {
         console.warn("render marketing page filter error", err);
       }
+      // KHÔNG trao đổi Page Token tự động ở đây — sẽ trao đổi LAZY
+      // chỉ khi user tick chọn page (xem handler inbox-page-checkbox bên dưới)
+      // hoặc khi gọi /conversations (xem inboxResolvePageToken).
+      // Lý do: tránh Meta rate limit (368) khi user có nhiều page.
       inboxState.conversations = [];
       inboxRenderConversationList();
       if (inboxStatus)
@@ -5002,19 +5129,52 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
     try {
       // Load metadata KHÔNG kèm messages (để load nhanh), messages load lazy khi click
       const fields = "id,updated_time,unread_count,participants,snippet";
+      const userToken =
+        document.getElementById("tokenInput")?.value.trim() || "";
+      // Tìm các page đã chọn nhưng chưa có Page Token -> cần trao đổi
+      // Chạy TUẦN TỰ + delay 200ms để tránh Meta rate limit (368)
+      const pagesNeedingToken = selectedPages.filter(
+        (page) => !page.accessToken,
+      );
+      if (pagesNeedingToken.length > 0) {
+        if (inboxStatus)
+          inboxStatus.innerText = `🔐 Đang lấy Page Token cho ${pagesNeedingToken.length} Page (tuần tự)...`;
+        for (let i = 0; i < pagesNeedingToken.length; i++) {
+          const page = pagesNeedingToken[i];
+          try {
+            const pageToken = await inboxResolvePageToken(page);
+            if (pageToken) {
+              page.accessToken = pageToken;
+              // Cập nhật cache để lần sau không cần trao đổi
+              await inboxStorageSet("inboxCachedPages", inboxState.pages);
+            }
+          } catch (e) {}
+          if (inboxStatus)
+            inboxStatus.innerText = `🔐 Lấy Page Token ${i + 1}/${pagesNeedingToken.length}...`;
+          // Delay 200ms giữa các lần trao đổi (Meta rate limit: ~5 req/s/user)
+          if (i < pagesNeedingToken.length - 1) {
+            await new Promise((r) => setTimeout(r, 200));
+          }
+        }
+      }
       const pagePromises = selectedPages.map(async (page) => {
-        if (!page.accessToken) {
-          errors.push(`${page.name}: thiếu Page Access Token`);
+        // Đã trao đổi ở trên, giờ chỉ cần dùng page.accessToken
+        // (nếu vẫn rỗng thì user Token thiếu scope, báo lỗi)
+        const effectiveToken = page.accessToken;
+        if (!effectiveToken) {
+          errors.push(
+            `${page.name}: chưa có Page Access Token (User Token thiếu quyền pages_show_list / pages_messaging)`,
+          );
           return [];
         }
         try {
-          const url = `https://graph.facebook.com/${INBOX_GRAPH_VERSION}/${page.id}/conversations?platform=messenger&folder=${encodeURIComponent(inboxState.folder.toUpperCase())}&fields=${encodeURIComponent(fields)}&limit=100&access_token=${encodeURIComponent(page.accessToken)}`;
+          const url = `https://graph.facebook.com/${INBOX_GRAPH_VERSION}/${page.id}/conversations?platform=messenger&folder=${encodeURIComponent(inboxState.folder.toUpperCase())}&fields=${encodeURIComponent(fields)}&limit=100&access_token=${encodeURIComponent(effectiveToken)}`;
           const conversations = await inboxFetchAll(url, 1);
           conversations.forEach((conversation) =>
             Object.assign(conversation, {
               __pageId: page.id,
               __pageName: page.name,
-              __pageToken: page.accessToken,
+              __pageToken: effectiveToken,
               __messagesLoaded: false,
             }),
           );
@@ -5152,11 +5312,12 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         }
       }
 
-      // 2. NẾU ĐANG CÓ KHÁCH NHẮN TIN -> Luôn giữ 8 giây/lần (KỂ CẢ KHI TAB ĐANG ẨN/THU NHỎ)
-      // Để AI tự động trả lời khách tức thì mà không bị trễ
+      // 2. NẾU ĐANG CÓ KHÁCH NHẮN TIN -> 30 giây/lần (Dashboard chỉ đọc cache từ background,
+      // background.js đã poll mỗi 1 phút alarm + mỗi 15s qua inbox-poll-now → đủ realtime)
+      // Để tránh Meta rate limit (368) khi user có nhiều Page.
       if (recentCustomerMessage) {
-        _lastAdaptiveIntervalMs = 8000;
-        return 8000;
+        _lastAdaptiveIntervalMs = 30000;
+        return 30000;
       }
 
       // 3. Khi tab bị ẩn / thu nhỏ nhưng CHƯA có tin nhắn mới -> Quét mỗi 20 giây/lần
@@ -5216,10 +5377,12 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       inboxRecordUserActivity();
-      if (inboxState.live) {
-        if (inboxPollTimeout) clearTimeout(inboxPollTimeout);
-        runAdaptivePoll().catch(() => {});
-      }
+      // ❌ TẮT: không gọi runAdaptivePoll khi focus lại tab.
+      // Dashboard nhận data realtime qua message "inbox-bg-updated" từ background.
+      // if (inboxState.live) {
+      //   if (inboxPollTimeout) clearTimeout(inboxPollTimeout);
+      //   runAdaptivePoll().catch(() => {});
+      // }
     }
   });
 
@@ -5257,13 +5420,23 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       console.warn("Lỗi trong adaptive poll loop:", err);
     }
 
-    // Lên lịch cho lần chạy tiếp theo với thời gian thích ứng
-    const nextInterval = await getDynamicInterval();
-    if (inboxState.live) {
-      if (inboxPollTimeout) clearTimeout(inboxPollTimeout);
-      inboxPollTimeout = setTimeout(() => {
-        runAdaptivePoll().catch(() => {});
-      }, nextInterval);
+    // ❌ TẮT vòng lặp tự động: dashboard KHÔNG tự lên lịch poll nữa.
+    // Background (service worker) đã chạy alarm 1 phút + nhận "inbox-poll-now".
+    // Dashboard chỉ nhận data qua message "inbox-bg-updated" → inboxMergeConversations.
+    // Lý do: tránh Meta rate limit (368) khi user có nhiều Page đang chọn.
+    //
+    // Nếu muốn bật lại realtime poll từ dashboard, comment out block dưới:
+    //
+    // const nextInterval = await getDynamicInterval();
+    // if (inboxState.live) {
+    //   if (inboxPollTimeout) clearTimeout(inboxPollTimeout);
+    //   inboxPollTimeout = setTimeout(() => {
+    //     runAdaptivePoll().catch(() => {});
+    //   }, nextInterval);
+    // }
+    if (inboxPollTimeout) {
+      clearTimeout(inboxPollTimeout);
+      inboxPollTimeout = null;
     }
     inboxTickLiveStatus();
   }
@@ -5275,9 +5448,13 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
     // Reset activity time
     inboxRecordUserActivity();
 
-    if (!inboxPollTimeout) {
-      runAdaptivePoll().catch(() => {});
-    }
+    // ❌ TẮT: Dashboard không tự poll /conversations nữa.
+    // Lý do: background.js (service worker) đã lo polling + auto-reply qua alarm 1 phút
+    // và message "inbox-poll-now". Dashboard chỉ cần lắng nghe "inbox-bg-updated"
+    // để nhận cache mới. Tránh Meta rate limit (368) do gọi trùng lặp.
+    // if (!inboxPollTimeout) {
+    //   runAdaptivePoll().catch(() => {});
+    // }
   }
 
   function inboxStopLive() {
@@ -5314,6 +5491,7 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       intervalSec >= 60
         ? `${Math.round(intervalSec / 60)}p`
         : `${intervalSec}s`;
+
     inboxStatus.innerText = `${prefix}${count} hội thoại · ${live ? `🟢 Realtime (${intervalStr})` : "🟡 Tạm dừng"} · đồng bộ ${at}`;
   }
 
@@ -6253,9 +6431,8 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
     // Khôi phục trạng thái đã lưu
     try {
       const saved = await new Promise((resolve) =>
-        chrome.storage?.local?.get(
-          { inboxMarketingCollapsed: false },
-          (r) => resolve(r?.inboxMarketingCollapsed),
+        chrome.storage?.local?.get({ inboxMarketingCollapsed: false }, (r) =>
+          resolve(r?.inboxMarketingCollapsed),
         ),
       );
       mktBody.style.display = saved ? "none" : "flex";
@@ -7036,15 +7213,51 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
     const target = event.target;
     if (target.classList.contains("inbox-page-checkbox")) {
       const pageId = target.getAttribute("data-page-id");
-      if (target.checked) inboxState.selectedPageIds.add(pageId);
-      else inboxState.selectedPageIds.delete(pageId);
+      if (target.checked) {
+        inboxState.selectedPageIds.add(pageId);
+        // LAZY: chỉ trao đổi Page Token khi user tích chọn page
+        const page = inboxState.pages.find(
+          (p) => String(p.id) === String(pageId),
+        );
+        if (page && !page.accessToken) {
+          const userToken =
+            document.getElementById("tokenInput")?.value.trim() || "";
+          if (userToken) {
+            if (inboxStatus)
+              inboxStatus.innerText = `🔐 Đang lấy Page Token cho ${page.name || pageId}...`;
+            try {
+              const pageToken = await inboxExchangePageToken(pageId, userToken);
+              if (pageToken) {
+                page.accessToken = pageToken;
+                // Cập nhật lại cache để lần sau không phải trao đổi lại
+                await inboxStorageSet("inboxCachedPages", inboxState.pages);
+                if (inboxStatus)
+                  inboxStatus.innerText = `✅ Đã có Page Token cho ${page.name || pageId}`;
+              } else {
+                if (inboxStatus)
+                  inboxStatus.innerText = `⚠️ Không lấy được Page Token cho ${page.name || pageId} (User Token thiếu quyền)`;
+              }
+            } catch (e) {
+              if (inboxStatus)
+                inboxStatus.innerText = `❌ Lỗi trao đổi Page Token: ${e.message}`;
+            }
+          }
+        }
+      } else {
+        inboxState.selectedPageIds.delete(pageId);
+      }
       await inboxStorageSet("inboxSelectedPageIds", [
         ...inboxState.selectedPageIds,
       ]);
       inboxRenderPageList();
       inboxUpdateLiveStatus();
       inboxSyncBackgroundConfig();
-      if (inboxStatus)
+      if (
+        inboxStatus &&
+        !inboxStatus.innerText.startsWith("🔐") &&
+        !inboxStatus.innerText.startsWith("✅") &&
+        !inboxStatus.innerText.startsWith("❌")
+      )
         inboxStatus.innerText = `${inboxState.pages.length} Page · đã chọn ${inboxState.selectedPageIds.size}`;
       return;
     }

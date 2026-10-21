@@ -161,6 +161,7 @@ async function inboxFetchAll(url, maxPages = 2) {
   let next = url;
   for (let i = 0; i < maxPages && next; i++) {
     const response = await fetch(next);
+    _trackApiCall(response, false); // Track BUC (Page-level) calls
     const data = await response.json();
     if (data.error) throw new Error(data.error.message);
     if (Array.isArray(data.data)) result.push(...data.data);
@@ -256,6 +257,8 @@ async function inboxBackgroundPoll() {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: params.toString(),
       });
+      // Track API call cho rate limit
+      _trackApiCall(response, true);
       const batchResults = await response.json();
 
       if (Array.isArray(batchResults)) {
@@ -286,6 +289,7 @@ async function inboxBackgroundPoll() {
                 "id,updated_time,unread_count,participants,snippet";
               const safeUrl = `https://graph.facebook.com/${INBOX_BG_GRAPH_VERSION}/${page.id}/conversations?platform=messenger&folder=${encodeURIComponent(folder)}&fields=${encodeURIComponent(safeFields)}&limit=50&access_token=${encodeURIComponent(page.access_token || page.accessToken)}`;
               const safeRes = await fetch(safeUrl);
+              _trackApiCall(safeRes, true); // Fallback = app-level call
               const safeData = await safeRes.json();
               if (Array.isArray(safeData.data)) {
                 safeData.data.forEach((conversation) => {
@@ -322,6 +326,63 @@ async function inboxBackgroundPoll() {
 
   // Tự động trả lời các tin nhắn mới (nếu bật) + thông báo Telegram
   await processAutoReplyAndNotify(incoming);
+}
+
+// ============================================================
+// 👉 Rate Limit Tracking cho Facebook API
+// ============================================================
+let _rateLimitHourly = { calls: 0, resetAt: Date.now() + 3600000, usage: null };
+let _rateLimitAppLevel = { calls: 0, resetAt: Date.now() + 3600000 };
+
+function _checkRateLimitReset() {
+  const now = Date.now();
+  if (now >= _rateLimitHourly.resetAt) {
+    _rateLimitHourly = { calls: 0, resetAt: now + 3600000, usage: null };
+  }
+  if (now >= _rateLimitAppLevel.resetAt) {
+    _rateLimitAppLevel = { calls: 0, resetAt: now + 3600000 };
+  }
+}
+
+function _trackApiCall(response, isAppLevel = false) {
+  _checkRateLimitReset();
+  const now = Date.now();
+
+  // Đếm calls
+  if (isAppLevel) {
+    _rateLimitAppLevel.calls++;
+  } else {
+    _rateLimitHourly.calls++;
+  }
+
+  // Parse headers từ response
+  if (response && response.headers) {
+    try {
+      // X-App-Usage header
+      const appUsage = response.headers.get("X-App-Usage");
+      if (appUsage) {
+        _rateLimitAppLevel.usage = JSON.parse(appUsage);
+      }
+      // X-Business-Use-Case-Usage header
+      const bucUsage = response.headers.get("X-Business-Use-Case-Usage");
+      if (bucUsage) {
+        _rateLimitHourly.usage = JSON.parse(bucUsage);
+      }
+    } catch (e) {
+      // Ignore parse errors
+    }
+  }
+
+  // Lưu vào storage để dashboard đọc
+  chrome.storage.local.set({
+    inboxBgRateLimit: {
+      hourly: { calls: _rateLimitHourly.calls, resetAt: _rateLimitHourly.resetAt },
+      appLevel: { calls: _rateLimitAppLevel.calls, resetAt: _rateLimitAppLevel.resetAt },
+      appUsage: _rateLimitAppLevel.usage,
+      bucUsage: _rateLimitHourly.usage,
+      updatedAt: now,
+    },
+  });
 }
 
 // ============================================================
@@ -367,7 +428,7 @@ async function processAutoReplyAndNotify(conversations) {
           cfg.inboxAutoReplyText ||
           "Cảm ơn bạn đã nhắn tin, chúng tôi sẽ phản hồi sớm nhất!";
         try {
-          await fetch(
+          const replyRes = await fetch(
             `https://graph.facebook.com/${INBOX_BG_GRAPH_VERSION}/me/messages?access_token=${encodeURIComponent(conv.__pageToken)}`,
             {
               method: "POST",
@@ -378,6 +439,7 @@ async function processAutoReplyAndNotify(conversations) {
               }),
             },
           );
+          _trackApiCall(replyRes, false); // Track message send
         } catch (e) {
           console.log("❌ auto-reply lỗi:", e.message);
         }

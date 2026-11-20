@@ -204,6 +204,26 @@
       border: 1px solid #dddfe2;
     }
 
+    /* Thẻ tổng quan (Care Camp) */
+    .cc-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .cc-card-label {
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 700;
+      letter-spacing: .3px;
+    }
+    .cc-card-value {
+      font-size: 22px;
+      font-weight: 800;
+      margin-top: 4px;
+      font-family: monospace;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -694,6 +714,44 @@
       align-items: center;
       gap: 6px;
       cursor: pointer;
+    }
+
+    /* 🔑 Ô Page Access Token trong panel cấu hình AI */
+    .ai-page-token {
+      width: 100% !important;
+      min-width: 0;
+      flex: 1 1 auto;
+      padding: 6px 8px;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: "Consolas", monospace;
+      box-sizing: border-box;
+    }
+
+    .ai-page-token:focus {
+      outline: 2px solid #228be6;
+      outline-offset: -1px;
+      border-color: #228be6;
+    }
+
+    .ai-page-token-eye,
+    .ai-page-token-test {
+      flex: 0 0 auto;
+      background: #fff;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      line-height: 1;
+    }
+
+    .ai-page-token-eye:hover,
+    .ai-page-token-test:hover {
+      background: #e7f5ff;
+      border-color: #228be6;
+    }
+
+    .ai-page-token-status:empty {
+      display: none;
     }
 
     .ai-grid {
@@ -1617,6 +1675,9 @@
     <div id="nav-dashboard" class="sidebar-icon active-icon" title="Bảng Chỉ Số Vít Camp">
       📊
     </div>
+    <div id="nav-carecamp" class="sidebar-icon" title="Tắt Camp Tự Động">
+      ✂️
+    </div>
     <div id="nav-accounts" class="sidebar-icon" title="Tổng Quan Tài Khoản">
       💼
     </div>
@@ -1641,6 +1702,10 @@
     </div>
     <div id="nav-autopause" class="sidebar-icon" title="Tự Động Tắt Nhóm">
       ✂️
+    </div>
+    <div class="divider"></div>
+    <div id="nav-apicount" class="sidebar-icon" title="Đếm Số Lần Gọi API">
+      🔢
     </div>
   </div>
 
@@ -1767,7 +1832,7 @@
         <div class="input-group">
           <div class="input-group-col" style="flex: 2">
             <div style="display: flex; gap: 10px; flex-direction: column">
-              <input type="password" id="tokenInput"
+              <input type="text" id="tokenInput"
                 placeholder="Access Token (EAAB...) - Bỏ trống nếu Share Page Pro5" />
               <div style="display: flex; gap: 6px">
                 <button id="autoTokenBtn" class="btn btn-orange" style="margin-bottom: 0; flex: 1">
@@ -1814,7 +1879,9 @@
                 <th>CPC</th>
                 <th>KQ</th>
                 <th>GIÁ / KQ</th>
-                <th>CPL (INBOX)</th>
+                <th>CPL (INBOX)
+                  
+                </th>
                 <th>NGÂN SÁCH</th>
                 <th>CHI TIÊU</th>
                 <th>QUY TẮC TẮT CAMP</th>
@@ -2378,6 +2445,29 @@
           <span id="inbox-status" class="inbox-status">Chưa tải Page</span>
         </div>
 
+        <!-- 🔴 Banner cảnh báo token hết hạn (hiển thị động bởi dashboard.js) -->
+        <div id="inbox-token-error-banner" style="display:none; margin-top:8px; padding:10px 12px;
+          background:#fff5f5; border:1px solid #ffa8a8; border-left:4px solid #fa5252;
+          border-radius:6px; font-size:12px; color:#c92a2a;">
+          <div style="display:flex; align-items:flex-start; gap:8px;">
+            <span style="font-size:16px; line-height:1.2;">🔴</span>
+            <div style="flex:1; min-width:0;">
+              <b>Token Facebook đã hết hạn hoặc không còn hiệu lực.</b>
+              <div id="inbox-token-error-detail" style="margin-top:3px; color:#868e96;"></div>
+              <div style="margin-top:6px;">
+                Hệ thống đã tự giảm tần suất quét để không spam API. Bấm
+                <b>⚡ LẤY TOKEN TỰ ĐỘNG</b> ở đầu trang để lấy token mới, hoặc
+                dán token mới vào ô Token rồi bấm <b>💾 Lưu</b>.
+              </div>
+            </div>
+            <button id="inbox-token-error-retry" type="button"
+              style="background:#fa5252; color:#fff; border:0; border-radius:4px; padding:6px 12px;
+              cursor:pointer; font-size:12px; font-weight:600; white-space:nowrap;">
+              🔄 Thử lại
+            </button>
+          </div>
+        </div>
+
         <div class="inbox-toolbar"
           style="background:#fff7e6;border:1px solid #ffd591;padding:10px;gap:8px;flex-wrap:wrap">
           <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -2730,7 +2820,216 @@
     </div>
   </div>
 
+  <!-- ============================================================
+       ✂️ TRANG TẮT CAMP TỰ ĐỘNG (CARE CAMP) — chạy trong extension
+       ============================================================ -->
+  <div id="page-carecamp" class="page-section">
+    <div class="card" style="padding: 18px">
+      <h2 class="card-title">✂️ TẮT CAMP TỰ ĐỘNG</h2>
+      <p style="color:#555;font-size:13px;margin-bottom:14px">
+        Tự động tắt nhóm quảng cáo khi <b>ĐỒNG THỜI</b>: tiêu &gt; ngưỡng tiền
+        <b>VÀ</b> giá/KQ &gt; ngưỡng giá <b>VÀ</b> CPM &gt; ngưỡng CPM. Dùng token
+        &amp; ID tài khoản đang nhập ở trang <b>Bảng Chỉ Số Vít Camp</b>.
+      </p>
+
+      <!-- Ngưỡng chung -->
+      <div
+        style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:14px;margin-bottom:14px">
+        <div style="font-weight:800;color:#0369a1;margin-bottom:10px">
+          ⚙️ QUY TẮC TỰ ĐỘNG TẮT NHÓM (dùng chung)
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+          <div class="input-group-col">
+            <label style="font-size:12px;font-weight:bold;color:#b45309">1. Tổng chi tiêu &gt; (VNĐ)</label>
+            <input type="number" id="ccMaxSpend" value="10000" />
+          </div>
+          <div class="input-group-col">
+            <label style="font-size:12px;font-weight:bold;color:#0e7490">2. Giá / KQ (CPR·CPL·CPC) &gt; (VNĐ)</label>
+            <input type="number" id="ccMaxPrice" value="12000" />
+          </div>
+          <div class="input-group-col">
+            <label style="font-size:12px;font-weight:bold;color:#7c3aed">3. CPM &gt; (VNĐ)</label>
+            <input type="number" id="ccMaxCpm" value="50000" />
+          </div>
+          <div class="input-group-col">
+            <label style="font-size:12px;font-weight:bold;color:#334155">Chế độ chỉ số</label>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
+                <input type="checkbox" id="ccUseCpl" style="width:16px;height:16px;accent-color:#1877f2" />
+                📣 Dùng CPL (hội thoại inbox)
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
+                <input type="checkbox" id="ccUseCpc" style="width:16px;height:16px;accent-color:#1877f2" />
+                🖱️ Dùng CPC (click link)
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tài khoản + nút thao tác -->
+      <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+        <div class="input-group-col" style="flex:2;min-width:260px">
+          <label style="font-size:13px;font-weight:bold">🔑 Access Token (bỏ trống nếu đã nhập ở Bảng Chỉ Số)</label>
+          <input type="text" id="ccTokenInput" placeholder="EAAB... / EAAW..." />
+        </div>
+        <div class="input-group-col" style="flex:3;min-width:260px">
+          <label style="font-size:13px;font-weight:bold">🆔 ID tài khoản quảng cáo (cách nhau dấu phẩy)</label>
+          <input type="text" id="ccIdsInput" placeholder="Ví dụ: 1234567890, 9876543210" />
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <button id="ccBtnLoad" class="btn btn-blue" style="flex:1;min-width:200px;padding:12px;font-size:14px">
+          🔄 1. TẢI DANH SÁCH NHÓM ĐANG CHẠY
+        </button>
+        <button id="ccBtnStart" class="btn btn-green" style="flex:1;min-width:200px;padding:12px;font-size:14px">
+          🚀 2. LƯU & BẮT ĐẦU GIÁM SÁT
+        </button>
+        <button id="ccBtnStop" class="btn btn-red" style="flex:1;min-width:200px;padding:12px;font-size:14px;display:none">
+          🛑 ĐANG GIÁM SÁT (BẤM ĐỂ DỪNG)
+        </button>
+        <button id="ccBtnScan" class="btn btn-purple" style="flex:1;min-width:180px;padding:12px;font-size:14px">
+          ⚡ QUÉT & TẮT NGAY
+        </button>
+      </div>
+
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <span id="ccRunningTag" style="background:#f0f2f5;color:#65676b;padding:5px 12px;border-radius:14px;font-size:12px;font-weight:bold">
+          ⚪ ĐÃ DỪNG
+        </span>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;font-weight:bold">
+          <input type="checkbox" id="ccAutoScan" checked style="width:16px;height:16px;accent-color:#1877f2" />
+          🔁 Tự động quét mỗi 1 phút
+        </label>
+      </div>
+
+      <div id="ccMsg" style="display:none;padding:9px 11px;border-radius:8px;font-size:12px;margin-bottom:12px"></div>
+      <div id="ccLoading" style="display:none;color:#1877f2;text-align:center;font-weight:bold;margin-bottom:10px">
+        ⏳ Đang tải danh sách nhóm...
+      </div>
+
+      <!-- Thẻ tổng quan -->
+      <div id="ccStats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px"></div>
+
+      <!-- Bảng nhóm đang chạy -->
+      <h3 style="font-size:14px;margin:0 0 10px;color:#0f172a">🔄 NHÓM ĐANG CHẠY (chọn để giám sát)</h3>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
+          <input type="checkbox" id="ccSelectAll" style="width:16px;height:16px;cursor:pointer" />
+          Chọn tất cả
+        </label>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:40px;text-align:center">CHỌN</th>
+              <th>TÀI KHOẢN</th>
+              <th>CHIẾN DỊCH</th>
+              <th>NHÓM QUẢNG CÁO</th>
+              <th style="text-align:right">CHI TIÊU H.NAY</th>
+              <th style="text-align:right">KQ</th>
+              <th style="text-align:right">GIÁ / KQ</th>
+              <th style="text-align:center">CPL (INBOX)</th>
+              <th style="text-align:right">CPC</th>
+              <th style="text-align:right">CPM</th>
+              <th style="text-align:center">TRẠNG THÁI</th>
+              <th style="width:260px">NGƯỠNG RIÊNG (TIỀN | GIÁ | CPM)</th>
+            </tr>
+          </thead>
+          <tbody id="ccTableBody">
+            <tr><td colspan="12" style="text-align:center;color:#606770;padding:20px">Bấm "Tải danh sách nhóm" để bắt đầu.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Bảng nhóm đang giám sát -->
+      <h3 style="font-size:14px;margin:16px 0 10px;color:#0f172a">🛡️ NHÓM ĐANG ĐƯỢC GIÁM SÁT</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>TÀI KHOẢN</th>
+              <th>CHIẾN DỊCH</th>
+              <th>NHÓM QUẢNG CÁO</th>
+              <th style="text-align:right">CHI TIÊU</th>
+              <th style="text-align:right">GIÁ / KQ</th>
+              <th style="text-align:right">CPM</th>
+              <th style="text-align:center">TRẠNG THÁI</th>
+              <th>THAO TÁC</th>
+            </tr>
+          </thead>
+          <tbody id="ccMonBody">
+            <tr><td colspan="8" style="text-align:center;color:#606770;padding:16px">Chưa có nhóm nào được giám sát.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Bảng nhóm đã tắt tự động -->
+      <h3 style="font-size:14px;margin:16px 0 10px;color:#991b1b">🛑 NHÓM ĐÃ TẮT TỰ ĐỘNG</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>TÀI KHOẢN</th>
+              <th>CHIẾN DỊCH</th>
+              <th>NHÓM QUẢNG CÁO</th>
+              <th style="text-align:right">LÚC TẮT</th>
+              <th style="text-align:right">GIÁ / KQ</th>
+              <th style="text-align:right">CPM</th>
+              <th>LÝ DO TẮT</th>
+              <th>THỜI ĐIỂM TẮT</th>
+            </tr>
+          </thead>
+          <tbody id="ccPausedBody">
+            <tr><td colspan="8" style="text-align:center;color:#606770;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:#475569;background:#fef2f2;border:1px dashed #fecaca;border-radius:8px;padding:10px">
+        💡 Facebook thường cập nhật chỉ số <b>chậm hơn bình thường</b>, nên nhóm có thể bị tắt sớm khi thực tế chưa vượt ngưỡng. Bấm <b>⚡ QUÉT &amp; TẮT NGAY</b> để đọc lại chỉ số mới nhất: nhóm nào <b>đã trở lại trong ngưỡng cho phép</b> sẽ được bật lại tự động.
+      </div>
+
+      <!-- Nhật ký -->
+      <h3 style="font-size:14px;margin:16px 0 10px;color:#0f172a">📜 NHẬT KÝ TỰ ĐỘNG TẮT / BẬT LẠI</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:170px">THỜI GIAN</th>
+              <th style="width:110px;text-align:center">LOẠI</th>
+              <th>NHÓM</th>
+              <th>CHI TIẾT</th>
+            </tr>
+          </thead>
+          <tbody id="ccLogBody">
+            <tr><td colspan="4" style="text-align:center;color:#606770;padding:16px">Chưa có nhật ký.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       🔢 TRANG ĐẾM SỐ LẦN GỌI API
+       ============================================================ -->
+  <div id="page-apicount" class="page-section">
+    <div class="card" style="padding: 18px">
+      <h2 class="card-title">🔢 BỘ ĐẾM SỐ LẦN GỌI API</h2>
+      <p style="color:#555;font-size:13px;margin-bottom:14px">
+        Tự động bắt <b>mọi</b> lệnh gọi <code>fetch()</code> trên Dashboard, Background và Popup — không cần sửa từng chỗ gọi API.
+        Số liệu được gom từ nhiều context, tự đặt lại mỗi ngày.
+      </p>
+      <div id="apicount-panel"></div>
+    </div>
+  </div>
+
+  <!-- 🔢 Bộ đếm API: phải nạp TRƯỚC dashboard.js để patch fetch kịp -->
+  <script src="api_counter.js"></script>
   <script src="dashboard.js"></script>
+  <script src="api_counter_ui.js"></script>
+  <script src="care_camp.js"></script>
 </body>
 
 </html>

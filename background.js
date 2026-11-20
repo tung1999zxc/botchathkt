@@ -1,3 +1,13 @@
+// ============================================================
+// 🔢 BỘ ĐẾM SỐ LẦN GỌI API — phải nạp ở DÒNG ĐẦU TIÊN để patch fetch
+//    trước khi background.js gọi bất kỳ API nào.
+// ============================================================
+try {
+  importScripts("api_counter.js");
+} catch (e) {
+  console.warn("[ApiCounter] Không nạp được api_counter.js:", e?.message);
+}
+
 // 👉 Khi click icon extension → mở dashboard
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: "dashboard.html" });
@@ -91,17 +101,194 @@ async function listenTelegramReplies() {
 const INBOX_BG_GRAPH_VERSION = "v25.0";
 const INBOX_BG_POLL_ALARM = "inbox-bg-poll";
 
-function scheduleInboxAlarm() {
-  chrome.alarms.create(INBOX_BG_POLL_ALARM, { periodInMinutes: 1 });
+// ============================================================
+// 👉 QUẢN LÝ TOKEN HẾT HẠN
+//    Meta trả lỗi khi token không còn hiệu lực:
+//      190 = Invalid OAuth access token (token hết hạn / bị thu hồi)
+//      102 = Session not valid / session expired
+//      463 = Session has expired
+//    Khi gặp các lỗi này → dừng poll nhanh, tăng backoff, báo lỗi lên UI
+// ============================================================
+const INBOX_TOKEN_ERROR_CODES = new Set([190, 102, 463]);
+const INBOX_TOKEN_ERROR_PATTERNS = [
+  /invalid\s+oauth\s+(access\s+)?token/i,
+  /session\s+(has\s+)?expired/i,
+  /session\s+not\s+valid/i,
+  /token\s+(is\s+)?expired/i,
+  /unauthorized/i,
+];
+
+// Backoff: 1 phút (bình thường) → 5 → 15 → 30 phút (khi token hết hạn)
+const INBOX_BACKOFF_MINUTES = [1, 5, 15, 30];
+const INBOX_MAX_BACKOFF_MINUTES = 30;
+
+function isTokenExpiredError(errorInfo) {
+  if (!errorInfo) return false;
+  if (
+    errorInfo.code !== undefined &&
+    errorInfo.code !== null &&
+    INBOX_TOKEN_ERROR_CODES.has(Number(errorInfo.code))
+  ) {
+    return true;
+  }
+  const msg = String(errorInfo.message || "");
+  return INBOX_TOKEN_ERROR_PATTERNS.some((re) => re.test(msg));
 }
 
-chrome.runtime.onInstalled.addListener(() => scheduleInboxAlarm());
-chrome.runtime.onStartup.addListener(() => scheduleInboxAlarm());
+// Lấy thông tin lỗi từ body của batch sub-request
+function parseBatchError(body) {
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed?.error) {
+      return {
+        code: parsed.error.code,
+        message: parsed.error.message || "",
+        type: parsed.error.type || "",
+      };
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
+// Lấy thông tin lỗi từ response JSON thường
+function parseResponseError(data) {
+  if (data?.error) {
+    return {
+      code: data.error.code,
+      message: data.error.message || "",
+      type: data.error.type || "",
+    };
+  }
+  return null;
+}
+
+function scheduleInboxAlarm(minutes) {
+  const period = Math.max(1, Math.min(minutes, INBOX_MAX_BACKOFF_MINUTES));
+  chrome.alarms.create(INBOX_BG_POLL_ALARM, { periodInMinutes: period });
+  return period;
+}
+
+// Đọc trạng thái backoff hiện tại từ storage
+async function getInboxBackoffState() {
+  const s = await chrome.storage.local.get([
+    "inboxTokenExpired",
+    "inboxTokenErrorAt",
+    "inboxBackoffLevel",
+  ]);
+  return {
+    expired: !!s.inboxTokenExpired,
+    errorAt: Number(s.inboxTokenErrorAt) || 0,
+    level: Number(s.inboxBackoffLevel) || 0,
+  };
+}
+
+// Đánh dấu token đã hết hạn + tăng backoff + báo lỗi lên UI
+async function markTokenExpired(errInfo) {
+  const state = await getInboxBackoffState();
+  // Chỉ tăng level khi lỗi mới xảy ra (sau 2 phút), tránh tăng liên tục
+  const now = Date.now();
+  const isNewEpisode = now - state.errorAt > 2 * 60 * 1000;
+  const level = isNewEpisode
+    ? Math.min(state.level + 1, INBOX_BACKOFF_MINUTES.length - 1)
+    : state.level;
+  const minutes = INBOX_BACKOFF_MINUTES[level] || INBOX_MAX_BACKOFF_MINUTES;
+
+  await chrome.storage.local.set({
+    inboxTokenExpired: true,
+    inboxTokenErrorAt: now,
+    inboxBackoffLevel: level,
+    inboxTokenErrorMessage:
+      errInfo?.message || "Token Facebook không còn hiệu lực",
+    inboxTokenErrorCode: errInfo?.code ?? "",
+  });
+
+  // Đổi lịch poll sang chu kỳ dài hơn để không spam API Meta
+  const applied = scheduleInboxAlarm(minutes);
+  console.log(
+    `🔴 Token hết hạn (code ${errInfo?.code ?? "?"}): ${errInfo?.message || ""} → poll mỗi ${applied} phút`,
+  );
+
+  // Báo cho dashboard hiển thị
+  try {
+    chrome.runtime.sendMessage({
+      type: "inbox-token-error",
+      code: errInfo?.code ?? "",
+      message: errInfo?.message || "Token Facebook không còn hiệu lực",
+      backoffMinutes: applied,
+    }).catch(() => {});
+  } catch (e) {}
+  return applied;
+}
+
+// Token đã hết hạn → reset backoff, trở lại poll bình thường
+async function clearTokenExpired() {
+  const state = await getInboxBackoffState();
+  if (!state.expired) return;
+  await chrome.storage.local.set({
+    inboxTokenExpired: false,
+    inboxTokenErrorAt: 0,
+    inboxBackoffLevel: 0,
+    inboxTokenErrorMessage: "",
+    inboxTokenErrorCode: "",
+  });
+  scheduleInboxAlarm(1);
+  console.log("✅ Token đã hồi sinh → poll trở lại mỗi 1 phút");
+}
+
+// 🎯 MỤC 5: Xoá Page Token đã hết hạn khỏi cache
+//    → lần poll kế tiếp sẽ gọi lại /me/accounts để lấy Page Token mới.
+//    Không xoá User Token (vẫn có thể còn hiệu lực).
+async function invalidateExpiredPageTokens(pageIds) {
+  try {
+    const stored = await chrome.storage.local.get([
+      "inboxBgPagesCached",
+      "inboxCachedPages",
+    ]);
+    const idSet = new Set((pageIds || []).map(String));
+
+    // Lọc bỏ các page bị lỗi token khỏi cache background
+    if (Array.isArray(stored.inboxBgPagesCached)) {
+      const filtered = stored.inboxBgPagesCached.filter(
+        (p) => !idSet.has(String(p.id)),
+      );
+      if (filtered.length !== stored.inboxBgPagesCached.length) {
+        await chrome.storage.local.set({
+          inboxBgPagesCached: filtered,
+          // Xoá timestamp cache → buộc lấy lại /me/accounts ở lần poll sau
+          inboxBgPagesCachedAt: 0,
+        });
+        console.log(
+          `♻️ Đã xoá ${stored.inboxBgPagesCached.length - filtered.length} Page Token hết hạn khỏi cache → sẽ lấy token mới ở lần poll sau`,
+        );
+      }
+    }
+
+    // Tương tự cho cache của dashboard
+    if (Array.isArray(stored.inboxCachedPages)) {
+      const filtered = stored.inboxCachedPages.filter(
+        (p) => !idSet.has(String(p.id)),
+      );
+      if (filtered.length !== stored.inboxCachedPages.length) {
+        await chrome.storage.local.set({
+          inboxCachedPages: filtered,
+          inboxCachedPagesAt: 0,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn("❌ Không invalidate được Page Token cache:", e.message);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(() => scheduleInboxAlarm(1));
+chrome.runtime.onStartup.addListener(() => scheduleInboxAlarm(1));
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === INBOX_BG_POLL_ALARM) {
-    // Re-schedule để SW không bị Chrome ngủ giữa chừng
-    scheduleInboxAlarm();
+    // ⚠️ KHÔNG re-schedule ở đây nữa — markTokenExpired/clearTokenExpired
+    // tự điều chỉnh chu kỳ theo trạng thái backoff.
     inboxBackgroundPoll()
       .then(() => updateBadgeFromCache())
       .catch((error) => console.log("❌ INBOX BG ERROR:", error?.message));
@@ -111,11 +298,22 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // Dashboard chủ động đánh thức SW + poll ngay
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "inbox-poll-now") {
-    inboxBackgroundPoll()
-      .then(() => {
-        updateBadgeFromCache();
-        return sendResponse({ ok: true });
+    // ⚠️ Nếu token đang hết hạn + đang backoff → bỏ qua, tránh dashboard
+    //    spam API Meta mỗi lần refresh (bypass được backoff của alarm)
+    getInboxBackoffState()
+      .then((state) => {
+        if (state.expired) {
+          console.log(
+            `⏸ Token đang hết hạn → bỏ qua poll (backoff ${state.level})`,
+          );
+          return { ok: true, skipped: true };
+        }
+        return inboxBackgroundPoll().then(() => {
+          updateBadgeFromCache();
+          return { ok: true };
+        });
       })
+      .then((result) => sendResponse(result))
       .catch((error) =>
         sendResponse({ ok: false, error: error?.message || "unknown" }),
       );
@@ -126,6 +324,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .get(["inboxBgCache", "inboxBgCacheAt", "inboxRealtimePing"])
       .then((data) => sendResponse({ ok: true, data }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  // 🎯 Sếp vừa lấy token mới → thử poll ngay + reset backoff
+  if (message?.type === "inbox-token-refreshed") {
+    clearTokenExpired()
+      .then(() => inboxBackgroundPoll())
+      .then(() => {
+        updateBadgeFromCache();
+        return sendResponse({ ok: true });
+      })
+      .catch((error) =>
+        sendResponse({ ok: false, error: error?.message || "unknown" }),
+      );
+    return true;
+  }
+  // 🎯 User bấm nút "LÀM MỚI HỘP THƯ" → poll ngay, bypass backoff
+  if (message?.type === "inbox-poll-force") {
+    inboxBackgroundPoll()
+      .then(() => {
+        updateBadgeFromCache();
+        return sendResponse({ ok: true });
+      })
+      .catch((error) =>
+        sendResponse({ ok: false, error: error?.message || "unknown" }),
+      );
     return true;
   }
   return false;
@@ -178,6 +401,8 @@ async function inboxBackgroundPoll() {
     "inboxBgLastSync",
     "inboxBgPagesCached",
     "inboxBgPagesCachedAt",
+    // 🔑 Map Page Access Token dán tay (ưu tiên cao nhất)
+    "inboxManualPageTokens",
   ]);
   const token = config.inboxBgToken;
   const selectedIds = Array.isArray(config.inboxBgSelectedPageIds)
@@ -215,16 +440,32 @@ async function inboxBackgroundPoll() {
         inboxBgPagesCached: pages,
         inboxBgPagesCachedAt: Date.now(),
       });
+      // 🎉 Lấy pages thành công → token User còn hiệu lực
+      await clearTokenExpired();
     } catch (e) {
       console.log("❌ Lỗi load danh sách page ở background:", e.message);
+      // 🔴 Phát hiện token hết hạn → bật backoff + báo lỗi
+      if (isTokenExpiredError({ message: e.message })) {
+        await markTokenExpired({ message: e.message });
+        return;
+      }
       if (pages.length === 0) return;
     }
   }
 
+  // 🔑 Map Page Access Token dán tay (ưu tiên cao nhất)
+  const manualTokens =
+    config.inboxManualPageTokens &&
+    typeof config.inboxManualPageTokens === "object"
+      ? config.inboxManualPageTokens
+      : {};
+
   const wantedPages = pages.filter(
     (page) =>
       page.id &&
-      (page.access_token || page.accessToken) &&
+      (page.access_token ||
+        page.accessToken ||
+        manualTokens[String(page.id)]) &&
       selectedIds.includes(String(page.id)),
   );
 
@@ -238,7 +479,9 @@ async function inboxBackgroundPoll() {
     // 👉 Gom tất cả Page vào 1 batch request duy nhất (1 request/Page, tránh lỗi 500 của Facebook)
     const batch = [];
     wantedPages.forEach((page) => {
-      const pageToken = page.access_token || page.accessToken;
+      // 🔑 ƯU TIÊN: token dán tay → token lấy từ /me/accounts
+      const pageToken =
+        manualTokens[String(page.id)] || page.access_token || page.accessToken;
       const convFields =
         "id,updated_time,unread_count,participants,snippet,link,messages.limit(30){id,created_time,from,to,message,attachments{mime_type,name,file_url,image_url,image_data,url},referral{ad_id,source,type,ref_param,ads_context_data{ad_title,photo_url,video_url,post_id}}}";
       const convUrl = `${INBOX_BG_GRAPH_VERSION}/${page.id}/conversations?platform=messenger&folder=${encodeURIComponent(folder)}&fields=${encodeURIComponent(convFields)}&limit=50&access_token=${encodeURIComponent(pageToken)}`;
@@ -260,6 +503,20 @@ async function inboxBackgroundPoll() {
       // Track API call cho rate limit
       _trackApiCall(response, true);
       const batchResults = await response.json();
+
+      // 🔴 Lỗi ở TẦNG BATCH (token User hết hạn) → dừng ngay, không fallback
+      if (batchResults?.error) {
+        const batchErr = parseResponseError(batchResults);
+        if (isTokenExpiredError(batchErr)) {
+          await markTokenExpired(batchErr);
+          return;
+        }
+        console.log("❌ Lỗi batch:", batchErr?.message);
+        return;
+      }
+
+      // Ghi nhận Page nào bị lỗi token → cần lấy lại Page Token
+      const pagesWithExpiredToken = [];
 
       if (Array.isArray(batchResults)) {
         for (let index = 0; index < wantedPages.length; index++) {
@@ -283,11 +540,27 @@ async function inboxBackgroundPoll() {
               console.warn("Lỗi parse body sub-request:", err);
             }
           } else {
-            // 👉 Fallback nếu sub-request lỗi
+            // 🔴 Sub-request lỗi → parse lỗi để biết có phải token hết hạn không
+            const subErr = parseBatchError(res?.body);
+            if (isTokenExpiredError(subErr)) {
+              console.warn(
+                `🔴 Page ${page.id} (${page.name}): token hết hạn — ${subErr.message}`,
+              );
+              pagesWithExpiredToken.push(page.id);
+              // KHÔNG fallback vì fallback dùng cùng token chết
+              continue;
+            }
+
+            // 👉 Fallback nếu sub-request lỗi (lỗi khác, không phải token)
             try {
               const safeFields =
                 "id,updated_time,unread_count,participants,snippet";
-              const safeUrl = `https://graph.facebook.com/${INBOX_BG_GRAPH_VERSION}/${page.id}/conversations?platform=messenger&folder=${encodeURIComponent(folder)}&fields=${encodeURIComponent(safeFields)}&limit=50&access_token=${encodeURIComponent(page.access_token || page.accessToken)}`;
+              // 🔑 ƯU TIÊN: token dán tay → token lấy từ /me/accounts
+              const safeToken =
+                manualTokens[String(page.id)] ||
+                page.access_token ||
+                page.accessToken;
+              const safeUrl = `https://graph.facebook.com/${INBOX_BG_GRAPH_VERSION}/${page.id}/conversations?platform=messenger&folder=${encodeURIComponent(folder)}&fields=${encodeURIComponent(safeFields)}&limit=50&access_token=${encodeURIComponent(safeToken)}`;
               const safeRes = await fetch(safeUrl);
               _trackApiCall(safeRes, true); // Fallback = app-level call
               const safeData = await safeRes.json();
@@ -296,7 +569,7 @@ async function inboxBackgroundPoll() {
                   Object.assign(conversation, {
                     __pageId: page.id,
                     __pageName: page.name,
-                    __pageToken: page.access_token || page.accessToken,
+                    __pageToken: safeToken,
                   });
                   incoming.push(conversation);
                 });
@@ -307,8 +580,34 @@ async function inboxBackgroundPoll() {
           }
         }
       }
+
+      // 🎯 MỤC 5: Page Token hết hạn → xoá cache để lần poll sau lấy token mới
+      if (pagesWithExpiredToken.length > 0) {
+        await invalidateExpiredPageTokens(pagesWithExpiredToken);
+      }
     } catch (e) {
       console.log("❌ Lỗi Batch Request ở background:", e.message);
+      if (isTokenExpiredError({ message: e.message })) {
+        await markTokenExpired({ message: e.message });
+        return;
+      }
+    }
+  }
+
+  // 🎉 Có dữ liệu → token còn hiệu lực → reset backoff
+  if (incoming.length > 0) {
+    await clearTokenExpired();
+  }
+
+  // 🔴 KHÔNG ghi đè cache cũ bằng mảng rỗng khi có lỗi token
+  //    (nếu không, người dùng sẽ thấy danh sách trống mà không biết vì sao)
+  if (incoming.length === 0) {
+    const errState = await getInboxBackoffState();
+    if (errState.expired) {
+      console.log(
+        "⚠️ Token hết hạn → giữ nguyên cache cũ, không ghi đè bằng danh sách rỗng",
+      );
+      return;
     }
   }
 

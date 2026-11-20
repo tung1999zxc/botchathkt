@@ -61,6 +61,8 @@ window.getHieuQuaCount = function (insights, optimization_goal) {
 
 // ================================================================
 // 🎯 Hàm đếm cuộc hội thoại từ inbox theo tag [N1], [N2]...
+// NGUỒN ĐẾM DUY NHẤT: nội dung tin nhắn + tên quảng cáo đính kèm
+// (ad_title trong referral của messages)
 // Tag được đặt trong tên nhóm QC & nội dung bài viết QC VD: [N1]
 // ================================================================
 window.countInboxConversationsByTag = async function (adsetName) {
@@ -74,21 +76,19 @@ window.countInboxConversationsByTag = async function (adsetName) {
     const tagBracket = `[${tag}]`;
     console.log(`🔍 Đang tìm tag [${tag}] trong inbox cho nhóm: ${adsetName}`);
 
-    // Lấy dữ liệu từ cache inbox + mapping trích xuất từ Meta Suite Content Script
+    // Lấy dữ liệu cache inbox từ background.js (poll mỗi 1 phút)
     const cached = await new Promise((resolve) => {
-      chrome.storage.local.get(
-        ["inboxBgCache", "inboxBgCacheAt", "inboxAdsetMapping"],
-        (result) => resolve(result || {}),
+      chrome.storage.local.get(["inboxBgCache"], (result) =>
+        resolve(result || {}),
       );
     });
 
     const inboxList = Array.isArray(cached.inboxBgCache)
       ? cached.inboxBgCache
       : [];
-    const adsetMapping = cached.inboxAdsetMapping || {};
 
-    if (inboxList.length === 0 && Object.keys(adsetMapping).length === 0) {
-      console.log("⚠️ Chưa có cache inbox hoặc mapping adset");
+    if (inboxList.length === 0) {
+      console.log("⚠️ Chưa có cache inbox");
       return null;
     }
 
@@ -103,56 +103,22 @@ window.countInboxConversationsByTag = async function (adsetName) {
       if (!conv || !conv.id) continue;
       const convId = String(conv.id);
 
-      // Kiểm tra thời gian: chỉ đếm hội thoại mới hôm nay
-      const convTime = conv.updated_time ? new Date(conv.updated_time) : null;
-      if (convTime && convTime < today) continue;
-
+      // Chỉ tính hội thoại có TIN NHẮN CHỨA TAG được gửi HÔM NAY
+      // (không tính hội thoại hôm qua được khách nhắn lại hôm nay)
       let hasTag = false;
-
-      // 1.1 Kiểm tra mapping trích xuất từ Meta Business Suite (Content Script cào bài viết)
-      const mapped =
-        adsetMapping[convId] || adsetMapping[convId.replace(/^t_/, "")];
-      if (
-        mapped &&
-        (mapped.tag?.toUpperCase() === tag ||
-          mapped.fullTag?.toUpperCase() === tagBracket.toUpperCase() ||
-          mapped.snippet?.toUpperCase().includes(tagBracket.toUpperCase()))
-      ) {
-        hasTag = true;
-      }
-
-      // 1.2 Tìm trong snippet
-      if (!hasTag && conv.snippet) {
-        const snipUpper = conv.snippet.toUpperCase();
-        if (snipUpper.includes(tagBracket.toUpperCase())) {
-          hasTag = true;
-        }
-      }
-
-      // 1.3 Tìm trong TẤT CẢ tin nhắn & thông tin quảng cáo đính kèm
-      if (!hasTag) {
-        const messages = conv.messages?.data || [];
-        for (const msg of messages) {
-          const msgText = (msg.message || "").toUpperCase();
-          const adTitle = (
-            msg.referral?.ads_context_data?.ad_title || ""
-          ).toUpperCase();
-          if (
-            msgText.includes(tagBracket.toUpperCase()) ||
-            adTitle.includes(tagBracket.toUpperCase())
-          ) {
-            hasTag = true;
-            break;
-          }
-        }
-      }
-
-      // 1.4 Tìm trong participants
-      if (!hasTag) {
-        const participants = conv.participants?.data || [];
-        for (const p of participants) {
-          const pName = (p.name || "").toUpperCase();
-          if (pName.includes(tagBracket.toUpperCase())) {
+      const messages = conv.messages?.data || [];
+      for (const msg of messages) {
+        const msgText = (msg.message || "").toUpperCase();
+        const adTitle = (
+          msg.referral?.ads_context_data?.ad_title || ""
+        ).toUpperCase();
+        if (
+          msgText.includes(tagBracket.toUpperCase()) ||
+          adTitle.includes(tagBracket.toUpperCase())
+        ) {
+          // Điều kiện: tin nhắn mang tag phải nằm trong ngày hôm nay
+          const msgTime = msg.created_time ? new Date(msg.created_time) : null;
+          if (msgTime && msgTime >= today) {
             hasTag = true;
             break;
           }
@@ -163,26 +129,6 @@ window.countInboxConversationsByTag = async function (adsetName) {
         countedConvIds.add(convId);
         count++;
         console.log(`  ✅ Hội thoại ${convId} khớp tag [${tag}]`);
-      }
-    }
-
-    // 2. Kiểm tra thêm các mapping hội thoại hôm nay nhận diện từ Meta Suite
-    for (const [cId, mapData] of Object.entries(adsetMapping)) {
-      if (!countedConvIds.has(cId) && mapData) {
-        const mapTime = mapData.updatedAt ? new Date(mapData.updatedAt) : null;
-        if (mapTime && mapTime >= today) {
-          if (
-            mapData.tag?.toUpperCase() === tag ||
-            mapData.fullTag?.toUpperCase() === tagBracket.toUpperCase() ||
-            mapData.snippet?.toUpperCase().includes(tagBracket.toUpperCase())
-          ) {
-            countedConvIds.add(cId);
-            count++;
-            console.log(
-              `  ✅ Hội thoại ${cId} (từ Meta Suite) khớp tag [${tag}]`,
-            );
-          }
-        }
       }
     }
 
@@ -645,6 +591,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const pages = [
     "page-dashboard",
+    "page-carecamp",
     "page-accounts",
     "page-bm",
     "page-env",
@@ -654,9 +601,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     "page-inbox",
     "page-share-page",
     "page-autopause",
+    "page-apicount",
   ];
   const navIds = [
     "nav-dashboard",
+    "nav-carecamp",
     "nav-accounts",
     "nav-bm",
     "nav-env",
@@ -666,6 +615,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     "nav-inbox",
     "nav-share-page",
     "nav-autopause",
+    "nav-apicount",
   ];
 
   navIds.forEach((navId, index) => {
@@ -680,6 +630,14 @@ document.addEventListener("DOMContentLoaded", async () => {
           document.getElementById(page)?.classList.remove("active-page"),
         );
         document.getElementById(pages[index])?.classList.add("active-page");
+        // 🔢 Mở tab Đếm API → làm mới số liệu ngay
+        if (pages[index] === "page-apicount") {
+          try {
+            window.__apiCounterUi?.refresh?.();
+          } catch (e) {
+            // ignore
+          }
+        }
       });
     }
   });
@@ -2952,9 +2910,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     aiReplying: new Set(), // convId đang xử lý — in-memory, chống lặp
     aiAutoReplyLock: false, // lock toàn cục chống gọi trùng
     aiDisabledConvs: new Set(), // convId bị tắt AI tạm thời — in-memory
+    // Cache kết quả Vision OCR theo msgId — PERSISTED để không gọi lại LLM
+    // cho cùng 1 tin nhắn khi dashboard reload / poll lại nhiều vòng.
+    aiVisionCache: {}, // { msgId: { hasAddress, address, amount } }
+    aiVisionInflight: new Map(), // msgId -> Promise, chống gọi song song
+    aiVisionCacheDirty: false,
+    processedCustomerMsgIds: new Set(), // msgId đã chạy pipeline — in-memory
+    processedCustomerMsgIdsPersisted: {}, // { msgId: 1 } — PERSISTED qua reload
+    processedDirty: false,
+    autoReplyDebounceTimer: null, // debounce gộp 2 nguồn merge
+    tokenError: null, // { message, code, backoffMinutes } — lỗi token Meta
     globalReplyStyle: "", // Gợi ý chung cho tất cả bot
     globalSystem: "", // Thông tin sản phẩm/shop chung cho tất cả bot
     globalApiKey: "", // API Key chung cho tất cả bot
+    pageTokens: {}, // 🔑 { pageId: PageAccessToken dán tay } — ưu tiên cao nhất
+    _pendingPageTokens: {}, // token đang gõ (chưa debounce xong)
+    _pageTokenSaveTimer: null,
     conversationTags: {}, // { convId: ["đã mua hàng", "đã thanh toán", ...] }
     tagFilter: "", // "" | "__none__" | tên tag cụ thể
     adDetailsCache: {}, // { [adId]: { adId, adName, adsetId, adsetName, campaignId, campaignName } }
@@ -3048,6 +3019,85 @@ document.addEventListener("DOMContentLoaded", async () => {
   const inboxReplyInput = document.getElementById("inbox-reply-input");
   const inboxSendButton = document.getElementById("btn-send-inbox-reply");
 
+  // ============================================================
+  // 🎯 MỤC 3: Báo lỗi token rõ ràng lên UI
+  //    Trước đây token hết hạn → danh sách trống im lặng, không biết vì sao.
+  // ============================================================
+  function inboxRenderTokenErrorBanner() {
+    const banner = document.getElementById("inbox-token-error-banner");
+    const detail = document.getElementById("inbox-token-error-detail");
+    if (!banner) return;
+    const err = inboxState.tokenError;
+    if (!err) {
+      banner.style.display = "none";
+      return;
+    }
+    banner.style.display = "block";
+    if (detail) {
+      const parts = [];
+      if (err.message) parts.push(err.message);
+      if (err.code) parts.push(`(Mã lỗi: ${err.code})`);
+      if (err.backoffMinutes) {
+        parts.push(`Đang thử lại mỗi ${err.backoffMinutes} phút.`);
+      }
+      detail.textContent = parts.join(" ");
+    }
+  }
+
+  // Nhận thông báo lỗi token từ background
+  chrome.runtime?.onMessage?.addListener?.((msg) => {
+    if (msg?.type === "inbox-token-error") {
+      inboxState.tokenError = {
+        message: msg.message || "Token Facebook không còn hiệu lực",
+        code: msg.code || "",
+        backoffMinutes: msg.backoffMinutes || 0,
+      };
+      inboxRenderTokenErrorBanner();
+      if (inboxStatus) {
+        inboxStatus.innerText = "🔴 Token hết hạn";
+        inboxStatus.style.color = "#c92a2a";
+      }
+      console.error("🔴 Token lỗi:", msg);
+    }
+  });
+
+  // Nút "Thử lại" trên banner
+  document
+    .getElementById("inbox-token-error-retry")
+    ?.addEventListener("click", async () => {
+      const btn = document.getElementById("inbox-token-error-retry");
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ Đang thử...";
+      }
+      try {
+        // Lấy token mới từ phiên đăng nhập Facebook
+        const autoBtn = document.getElementById("autoTokenBtn");
+        if (autoBtn) autoBtn.click();
+        // Ép background poll thử lại ngay (bypass backoff)
+        setTimeout(() => {
+          chrome.runtime?.sendMessage?.({ type: "inbox-poll-force" }, () => {
+            void chrome.runtime?.lastError;
+          });
+        }, 1500);
+        // Chờ token mới được lưu → listener sẽ tự đồng bộ & xoá banner
+        setTimeout(() => {
+          inboxState.tokenError = null;
+          inboxRenderTokenErrorBanner();
+          if (inboxStatus) inboxStatus.style.color = "";
+          if (btn) {
+            btn.disabled = false;
+            btn.innerText = "🔄 Thử lại";
+          }
+        }, 4000);
+      } catch (e) {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "🔄 Thử lại";
+        }
+      }
+    });
+
   function inboxEscape(value) {
     return String(value ?? "").replace(
       /[&<>"']/g,
@@ -3120,7 +3170,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     model: "gpt-4o-mini",
     apiKey: "",
     priceImages: [],
+    // 🔑 Page Access Token RIÊNG cho Page này (dán tay).
+    //    Khi có token này → ưu tiên dùng nó cho MỌI lệnh gọi API của Page này
+    //    (đọc hộp thư, gửi tin, đánh dấu đã đọc, auto-reply...).
+    //    Rỗng → fallback về Page Token lấy từ User Token như trước.
+    pageToken: "",
   };
+
+  // ⚡ HẠNG MỨC CHI PHÍ LLM
+  // Số ảnh tối đa gửi cho Vision OCR mỗi lần gọi (mỗi ảnh ~85-1100 token).
+  const INBOX_VISION_MAX_IMAGES = 1;
 
   function inboxGetAiConfig(pageId) {
     const key = String(pageId || "");
@@ -3146,6 +3205,111 @@ document.addEventListener("DOMContentLoaded", async () => {
     inboxState.aiConfigs = next;
   }
 
+  // ============================================================
+  // 🔑 PAGE ACCESS TOKEN DÁN TAY (ưu tiên cao nhất)
+  //    Lưu riêng 1 bảng map { pageId: token } để tra cứu nhanh, độc lập
+  //    với cấu hình AI (để sau này bổ sung cấu hình AI vẫn không mất token).
+  // ============================================================
+  async function inboxSaveManualPageToken(pageId, token) {
+    const key = String(pageId || "");
+    if (!key) return;
+    const current = (await inboxStorageGet("inboxManualPageTokens")) || {};
+    const next = { ...current };
+    const clean = String(token || "").trim();
+    if (clean) next[key] = clean;
+    else delete next[key];
+    await inboxStorageSet("inboxManualPageTokens", next);
+    inboxState.pageTokens = next;
+    console.log(`🔑 Đã lưu Page Token cho ${key}: ${clean ? "CÓ" : "đã xoá"}`);
+  }
+
+  async function inboxLoadManualPageTokens() {
+    const data = await inboxStorageGet("inboxManualPageTokens");
+    inboxState.pageTokens = data && typeof data === "object" ? { ...data } : {};
+    // Gán vào page.accessToken để mọi luồng gọi API dùng luôn token này
+    for (const page of inboxState.pages || []) {
+      const manual = inboxState.pageTokens[String(page.id)];
+      // Lưu lại token tự động để khôi phục được khi user xoá token dán tay
+      if (!page.autoToken) page.autoToken = page.accessToken || "";
+      if (manual) page.accessToken = manual;
+    }
+  }
+
+  /**
+   * Áp dụng Page Access Token dán tay cho 1 page:
+   *   - lưu vào storage (map inboxManualPageTokens)
+   *   - gán vào page.accessToken (để mọi luồng gọi API dùng ngay)
+   *   - đồng bộ sang background để poll nền cũng dùng token này
+   */
+  async function inboxApplyManualPageToken(pageId, value) {
+    const key = String(pageId || "");
+    if (!key) return;
+    const clean = String(value || "").trim();
+    await inboxSaveManualPageToken(key, clean);
+    // Đồng bộ pending (giữ nguyên giá trị đang gõ nếu khác)
+    if (inboxState._pendingPageTokens) {
+      inboxState._pendingPageTokens[key] = clean;
+    }
+
+    const page = inboxState.pages.find((p) => String(p.id) === key);
+    if (page) {
+      // 🗂 Giữ lại token tự động để khôi phục khi user xoá token dán tay
+      if (clean && !page.autoToken) page.autoToken = page.accessToken || "";
+      // Xoá token dán tay → quay lại dùng token tự động
+      page.accessToken = clean || page.autoToken || "";
+      await inboxStorageSet("inboxCachedPages", inboxState.pages);
+    }
+    // 🔄 Cập nhật luôn token của các hội thoại đã load → không phải reload
+    if (clean) {
+      for (const conv of inboxState.conversations || []) {
+        if (String(conv.__pageId) === key) {
+          conv.__pageToken = clean;
+        }
+      }
+    }
+    inboxSyncBackgroundConfig();
+
+    // Cập nhật badge trên UI
+    const badge = inboxPageList?.querySelector(
+      `.ai-page-token-badge[data-page-id="${key}"]`,
+    );
+    if (badge) {
+      badge.textContent = clean
+        ? "Đang dùng token này ✅"
+        : page?.accessToken
+          ? "Token tự động (từ User Token)"
+          : "Chưa có token";
+    }
+    console.log(
+      `🔑 Page ${key}: token dán tay ${clean ? "đã áp dụng ✅" : "đã xoá → dùng token tự động"}`,
+    );
+  }
+
+  /**
+   * 🧪 Kiểm tra Page Access Token có hợp lệ không (gọi /me trên Graph API).
+   */
+  async function inboxTestManualPageToken(pageId, token) {
+    const clean = String(token || "").trim();
+    if (!clean) return { ok: false, message: "Chưa nhập token" };
+    try {
+      const url = `https://graph.facebook.com/${INBOX_GRAPH_VERSION}/me?fields=id,name&access_token=${encodeURIComponent(clean)}`;
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (data?.error) {
+        return {
+          ok: false,
+          message: `❌ ${data.error.message || "Token không hợp lệ"}`,
+        };
+      }
+      return {
+        ok: true,
+        message: `✅ Token hợp lệ — Page: ${data?.name || "?"} (ID ${data?.id || "?"})`,
+      };
+    } catch (e) {
+      return { ok: false, message: `❌ Lỗi mạng: ${e.message}` };
+    }
+  }
+
   async function inboxLoadAiConfigs() {
     const data = await inboxStorageGet("inboxPageAiConfigs");
     inboxState.aiConfigs = data || {};
@@ -3157,6 +3321,71 @@ document.addEventListener("DOMContentLoaded", async () => {
     inboxState.globalSystem = globalSystem || "";
     const globalKey = await inboxStorageGet("inboxGlobalApiKey");
     inboxState.globalApiKey = globalKey || "";
+    const visionCache = await inboxStorageGet("inboxAiVisionCache");
+    inboxState.aiVisionCache = visionCache || {};
+    const processed = await inboxStorageGet("inboxProcessedMsgIds");
+    inboxState.processedCustomerMsgIdsPersisted = processed || {};
+    // Giới hạn cache tối đa 500 msg gần nhất để không phình storage vô hạn
+    const keys = Object.keys(inboxState.aiVisionCache);
+    if (keys.length > 500) {
+      keys.slice(0, keys.length - 500).forEach((k) => {
+        delete inboxState.aiVisionCache[k];
+      });
+    }
+  }
+
+  // Lưu cache Vision (debounce để không ghi storage liên tục)
+  let _inboxVisionSaveTimer = null;
+  function inboxPersistVisionCache() {
+    inboxState.aiVisionCacheDirty = true;
+    if (_inboxVisionSaveTimer) return;
+    _inboxVisionSaveTimer = setTimeout(async () => {
+      _inboxVisionSaveTimer = null;
+      if (!inboxState.aiVisionCacheDirty) return;
+      inboxState.aiVisionCacheDirty = false;
+      const keys = Object.keys(inboxState.aiVisionCache);
+      if (keys.length > 500) {
+        keys.slice(0, keys.length - 500).forEach((k) => {
+          delete inboxState.aiVisionCache[k];
+        });
+      }
+      try {
+        await inboxStorageSet("inboxAiVisionCache", inboxState.aiVisionCache);
+      } catch (e) {
+        // Bỏ qua lỗi storage
+      }
+    }, 2000);
+  }
+
+  // Lưu danh sách msgId đã xử lý (debounce) — tránh chạy lại LLM sau reload
+  let _inboxProcessedSaveTimer = null;
+  function inboxPersistProcessedMsgIds() {
+    inboxState.processedDirty = true;
+    if (_inboxProcessedSaveTimer) return;
+    _inboxProcessedSaveTimer = setTimeout(async () => {
+      _inboxProcessedSaveTimer = null;
+      if (!inboxState.processedDirty) return;
+      inboxState.processedDirty = false;
+      // Gộp set in-memory vào object đã persist
+      for (const id of inboxState.processedCustomerMsgIds) {
+        inboxState.processedCustomerMsgIdsPersisted[id] = 1;
+      }
+      // Giới hạn 1000 msg gần nhất
+      const keys = Object.keys(inboxState.processedCustomerMsgIdsPersisted);
+      if (keys.length > 1000) {
+        keys.slice(0, keys.length - 1000).forEach((k) => {
+          delete inboxState.processedCustomerMsgIdsPersisted[k];
+        });
+      }
+      try {
+        await inboxStorageSet(
+          "inboxProcessedMsgIds",
+          inboxState.processedCustomerMsgIdsPersisted,
+        );
+      } catch (e) {
+        // Bỏ qua lỗi storage
+      }
+    }, 3000);
   }
 
   function inboxEscapeAttr(value) {
@@ -3247,10 +3476,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function inboxSendAiReply({ conversation, page, aiReply, images }) {
-    // Ưu tiên conversation.__pageToken (đã gán khi load conversations).
-    // Nếu rỗng thì tự trao đổi User Token -> Page Token.
+    // 🔑 ƯU TIÊN CAO NHẤT: Page Access Token dán tay của user
+    //    (nếu Page này có token riêng thì luôn dùng token đó).
     let token =
-      conversation.__pageToken || page?.access_token || page?.accessToken;
+      inboxGetManualPageToken(conversation?.__pageId || page?.id) ||
+      conversation.__pageToken ||
+      page?.access_token ||
+      page?.accessToken;
     if (!token && page) {
       try {
         token = await inboxResolvePageToken(page);
@@ -3487,7 +3719,49 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ====== Trích xuất địa chỉ và số tiền đơn hàng bằng OpenAI Vision ======
+  // LƯU Ý COST: Hàm này tốn kém (Vision). Bọc bằng cache theo msgId + inflight
+  // để cùng 1 tin nhắn chỉ gọi OpenAI đúng 1 lần duy nhất.
   async function inboxExtractAddressAndAmount(conversation, message) {
+    const msgId = String(message?.id || "");
+    if (msgId) {
+      // 1. Đã có trong cache → trả về ngay, 0 token
+      const cached = inboxState.aiVisionCache?.[msgId];
+      if (cached) return cached;
+      // 2. Đang gọi dở cho msgId này → chờ kết quả, không gọi thêm
+      const inflight = inboxState.aiVisionInflight?.get(msgId);
+      if (inflight) {
+        try {
+          return await inflight;
+        } catch (e) {
+          return { hasAddress: false };
+        }
+      }
+    }
+
+    const promise = inboxExtractAddressAndAmountUncached(conversation, message);
+    if (msgId) {
+      inboxState.aiVisionInflight.set(msgId, promise);
+      try {
+        const result = await promise;
+        // Cache cả kết quả dương lẫn âm.
+        // Key theo msgId nên tin nhắn mới vẫn luôn được phân tích lại,
+        // còn cùng 1 msgId thì không bao giờ gọi LLM 2 lần.
+        inboxState.aiVisionCache[msgId] = result || { hasAddress: false };
+        inboxPersistVisionCache();
+        return result;
+      } catch (e) {
+        const fallback = { hasAddress: false };
+        inboxState.aiVisionCache[msgId] = fallback;
+        inboxPersistVisionCache();
+        return fallback;
+      } finally {
+        inboxState.aiVisionInflight.delete(msgId);
+      }
+    }
+    return promise;
+  }
+
+  async function inboxExtractAddressAndAmountUncached(conversation, message) {
     const text = (message?.message || "").trim();
     const attachments =
       message?.attachments?.data ||
@@ -3516,11 +3790,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!text && !hasImages) return { hasAddress: false };
 
     // 1. Tải ảnh sang Base64 để OpenAI Vision đọc trực tiếp (tránh lỗi 403 CDN Facebook)
+    // ⚡ TỐI ƯU TOKEN: chỉ lấy 1 ảnh đầu (ảnh đầy đủ nhất), thay vì 3 ảnh.
+    // detail:"low" ~85 token/ảnh so với detail:"high" ~1100 token/ảnh (tiết kiệm ~93%).
     const base64Images = [];
     if (hasImages) {
-      for (const imgUrl of rawImageUrls.slice(0, 3)) {
+      const target = rawImageUrls.slice(0, INBOX_VISION_MAX_IMAGES);
+      for (const imgUrl of target) {
         const b64 = await inboxFetchImageAsBase64(imgUrl);
         if (b64) base64Images.push(b64);
+        // Chỉ gửi 1 ảnh — ảnh đầu tiên đã đủ để OCR địa chỉ/số tiền
+        if (base64Images.length >= INBOX_VISION_MAX_IMAGES) break;
       }
     }
 
@@ -3622,6 +3901,25 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
 
+    // 3b. ⚡ TỐI ƯU TOKEN: Rule-based đã đủ tin → KHÔNG gọi OpenAI.
+    // Tin nhắn text thuần chứa từ khóa địa chỉ (đc:, giao về, 〒xxx-xxxx, số nhà...)
+    // đã được nhận diện chính xác ở bước 2 → trả về ngay, tiết kiệm 100% token.
+    if (ruleBasedAddressDetected && !hasImages) {
+      return {
+        hasAddress: true,
+        address: text,
+        amount: extractedAmount,
+      };
+    }
+
+    // 3c. ⚡ TỐI ƯU TOKEN: Tin nhắn quá ngắn, không ảnh, không từ khóa địa chỉ
+    // → không đáng để gọi LLM (gần như chắc chắn không có địa chỉ).
+    const looksLikeAddressText =
+      text.length >= 18 || /\d{3,}/.test(text) || text.includes(",");
+    if (!hasImages && !ruleBasedAddressDetected && !looksLikeAddressText) {
+      return { hasAddress: false };
+    }
+
     // 4. Sử dụng OpenAI Vision từ "🔑 API Key chung" đã cấu hình
     const pageId = conversation?.__pageId;
     const globalApiKey =
@@ -3662,7 +3960,9 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
               type: "image_url",
               image_url: {
                 url: img.dataUrl,
-                detail: "high",
+                // ⚡ "low" thay vì "high": ~85 token/ảnh thay vì ~1100.
+                // Đủ để OCR địa chỉ/số tiền, tiết kiệm ~93% token ảnh.
+                detail: "low",
               },
             });
           });
@@ -3803,6 +4103,20 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
   async function inboxHandleCustomerAddressOrder(conversation, message) {
     if (!conversation || !message) return;
     if (!inboxIsCustomerMessage(message, conversation)) return;
+
+    // ⚡ TỐI ƯU TOKEN: Nếu AI đã bị tắt cho hội thoại này (khách đã gửi địa chỉ)
+    // → địa chỉ đã được ghi nhận ở lần trước, không cần gọi LLM lại.
+    if (inboxState.aiDisabledConvs?.has(conversation.id)) return;
+
+    // ⚡ TỐI ƯU TOKEN: Không có API key ở đâu cả → bỏ qua hoàn toàn,
+    // tránh chạy pipeline OCR tốn tài nguyên mà không thể gọi được OpenAI.
+    const pageIdCfg = conversation?.__pageId;
+    const cfgForPage = pageIdCfg ? inboxGetAiConfig(pageIdCfg) : null;
+    const anyApiKey =
+      cfgForPage?.apiKey ||
+      inboxState.globalApiKey ||
+      (await inboxStorageGet("inboxGlobalApiKey"));
+    if (!anyApiKey) return;
 
     // Chống gửi trùng lặp thông báo cho cùng 1 tin nhắn
     if (!inboxState.notifiedAddressMsgIds) {
@@ -3978,21 +4292,55 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         // 1. Tự động nhận diện ngôn ngữ và gắn Tag ngôn ngữ
         inboxDetectAndTagLanguage(conversation);
 
-        // 2. Tự động kiểm tra địa chỉ, gắn tag "đã mua hàng" & gửi Telegram
         const messages = conversation.messages?.data || [];
-        if (messages.length > 0) {
-          const sorted = [...messages].sort(
-            (a, b) =>
-              new Date(a.created_time || 0) - new Date(b.created_time || 0),
-          );
-          const last = sorted[sorted.length - 1];
-          if (inboxIsCustomerMessage(last, conversation)) {
-            inboxHandleCustomerAddressOrder(conversation, last);
-          }
+        if (messages.length === 0) continue;
+        const sorted = [...messages].sort(
+          (a, b) =>
+            new Date(a.created_time || 0) - new Date(b.created_time || 0),
+        );
+        const last = sorted[sorted.length - 1];
+        if (!inboxIsCustomerMessage(last, conversation)) continue;
+
+        // ⚡ TỐI ƯU TOKEN: Không có API key → bỏ qua, KHÔNG đánh dấu đã xử lý.
+        // Nhờ vậy khi sếp thêm API key sau, tin nhắn chờ sẽ được xử lý ngay.
+        const cfgKey =
+          inboxGetAiConfig(conversation.__pageId)?.apiKey ||
+          inboxState.globalApiKey;
+        if (!cfgKey) continue;
+
+        // ⚡ TỐI ƯU TOKEN: Chỉ xử lý conversation có TIN NHẮN MỚI.
+        // Trước đây mỗi vòng poll 60s lặp qua TẤT CẢ hội thoại và gọi LLM
+        // lại cho tin nhắn cũ đã xử lý → đốt token vô ích.
+        const lastId = String(last.id || "");
+        if (!lastId) continue;
+        if (
+          inboxState.processedCustomerMsgIds?.has(lastId) ||
+          inboxState.processedCustomerMsgIdsPersisted?.[lastId]
+        ) {
+          continue; // Đã xử lý rồi → bỏ qua hoàn toàn, 0 token
         }
 
+        // Đánh dấu ngay (trước khi await) để chống re-entry song song
+        if (!inboxState.processedCustomerMsgIds) {
+          inboxState.processedCustomerMsgIds = new Set();
+        }
+        inboxState.processedCustomerMsgIds.add(lastId);
+        inboxPersistProcessedMsgIds();
+
+        // 2. Tự động kiểm tra địa chỉ, gắn tag "đã mua hàng" & gửi Telegram
+        // (dùng chung cache Vision với inboxAutoReplyConversation → chỉ gọi 1 lần)
+        await inboxHandleCustomerAddressOrder(conversation, last);
+
         // 3. Tự động trả lời AI (dùng chung hàm duy nhất với atomic lock)
-        await inboxAutoReplyConversation(conversation);
+        const repliedOk = await inboxAutoReplyConversation(conversation);
+
+        // ⚡ Nếu AI reply thất bại (lỗi mạng / rate limit OpenAI) → bỏ dấu đã xử lý
+        // để tin nhắn được thử lại ở vòng poll kế tiếp thay vì bị bỏ rơi.
+        if (repliedOk === false) {
+          inboxState.processedCustomerMsgIds.delete(lastId);
+          delete inboxState.processedCustomerMsgIdsPersisted[lastId];
+          inboxPersistProcessedMsgIds();
+        }
       }
     } finally {
       inboxState.aiAutoReplyLock = false;
@@ -4238,6 +4586,23 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
     const pages = inboxState.pages.filter((page) =>
       `${page.name} ${page.id}`.toLowerCase().includes(query),
     );
+    // 🛡 Giữ trạng thái ô Page Access Token đang gõ + focus (tránh mất khi re-render)
+    const tokenInputMemo = (() => {
+      const active = document.activeElement;
+      if (
+        active &&
+        active.classList?.contains("ai-page-token") &&
+        inboxPageList.contains(active)
+      ) {
+        return {
+          pageId: active.getAttribute("data-page-id"),
+          value: active.value,
+          selStart: active.selectionStart,
+          selEnd: active.selectionEnd,
+        };
+      }
+      return null;
+    })();
     // Render phần gợi ý chung + API Key chung (trước danh sách page)
     const globalSection = `
       <div class="inbox-global-ai-config" style="padding:8px 12px; border-bottom:1px solid #e9ecef;">
@@ -4263,10 +4628,13 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       const pageItems = pages
         .map((page) => {
           const picture = inboxSafeUrl(page.picture);
-          const tokenWarning = page.accessToken
-            ? ""
-            : '<div style="color:#c92a2a; font-size:10px; margin-top:3px;">Thiếu Page Token</div>';
+          const tokenWarning =
+            page.accessToken || inboxGetManualPageToken(page.id)
+              ? ""
+              : '<div style="color:#c92a2a; font-size:10px; margin-top:3px;">Thiếu Page Token</div>';
           const cfg = inboxGetAiConfig(page.id);
+          // 🔑 Token dán tay của Page này (ưu tiên cao nhất)
+          const manualToken = inboxGetManualPageToken(page.id);
           const checked = inboxState.selectedPageIds.has(page.id)
             ? "checked"
             : "";
@@ -4286,6 +4654,18 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
                 <button type="button" class="ai-config-toggle" data-page-id="${inboxEscape(page.id)}" title="Cấu hình AI cho Page này">⚙️</button>
               </label>
               <div class="ai-config-panel" data-panel="${inboxEscape(page.id)}" hidden>
+                <div class="ai-config-row">
+                  <label style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>🔑 Page Access Token (dán tay — ưu tiên dùng token này)</span>
+                    <span class="ai-page-token-badge" data-page-id="${inboxEscape(page.id)}" style="font-size:11px; color:#0284c7; font-weight:600;">${manualToken ? "Đang dùng token này ✅" : page.accessToken ? "Token tự động (từ User Token)" : "Chưa có token"}</span>
+                  </label>
+                  <div style="display:flex; gap:6px; align-items:center;">
+                    <input class="ai-page-token" type="password" data-page-id="${inboxEscape(page.id)}" value="${inboxEscapeAttr(manualToken)}" placeholder="EAAxxxxx... (bỏ trống = dùng token tự động từ User Token)" autocomplete="off" style="flex:1; font-size:12px;">
+                    <button type="button" class="ai-page-token-eye" data-page-id="${inboxEscape(page.id)}" title="Ẩn/Hiện token" style="font-size:12px; padding:4px 8px; cursor:pointer;">👁️</button>
+                    <button type="button" class="ai-page-token-test" data-page-id="${inboxEscape(page.id)}" title="Kiểm tra token có hợp lệ không" style="font-size:12px; padding:4px 8px; cursor:pointer;">🧪</button>
+                  </div>
+                  <div class="ai-page-token-status" data-page-id="${inboxEscape(page.id)}" style="font-size:11px; margin-top:4px; color:#64748b;"></div>
+                </div>
                 <div class="ai-config-row">
                   <label class="ai-toggle">
                     <input type="checkbox" class="ai-enabled" data-page-id="${inboxEscape(page.id)}" ${cfg.enabled ? "checked" : ""}>
@@ -4358,6 +4738,25 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         })
         .join("");
       inboxPageList.innerHTML = globalSection + pageItems;
+
+      // 🛡 Khôi phục ô Page Access Token đang gõ + focus sau khi re-render
+      if (tokenInputMemo) {
+        const el = inboxPageList.querySelector(
+          `.ai-page-token[data-page-id="${CSS.escape(tokenInputMemo.pageId)}"]`,
+        );
+        if (el) {
+          el.value = tokenInputMemo.value;
+          try {
+            el.focus();
+            el.setSelectionRange(
+              tokenInputMemo.selStart,
+              tokenInputMemo.selEnd,
+            );
+          } catch (e) {
+            // ignore
+          }
+        }
+      }
     }
     // Attach listeners for global controls (vì innerHTML xóa DOM cũ)
     const saveBtn = document.getElementById("inbox-save-global-style");
@@ -4403,6 +4802,12 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
           btn.textContent = "✅ OK";
           setTimeout(() => (btn.textContent = "💾 Lưu"), 2000);
         }
+        // ⚡ Xử lý ngay các tin nhắn đang chờ (trước đó bị bỏ qua vì chưa có API key)
+        setTimeout(() => {
+          inboxMaybeAutoReplyAll().catch((e) =>
+            console.error("❌ inboxMaybeAutoReplyAll lỗi:", e),
+          );
+        }, 500);
       });
     }
     const count = inboxState.selectedPageIds.size;
@@ -4766,28 +5171,30 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
   }
 
   // Auto-reply cho MỘT hội thoại cụ thể
+  // Trả về: true = đã reply thành công / không cần reply,
+  //         false = lỗi → caller có thể thử lại.
   async function inboxAutoReplyConversation(conversation) {
-    if (!conversation) return;
+    if (!conversation) return true;
     const pageId = conversation.__pageId;
     const page = inboxState.pages.find((p) => String(p.id) === String(pageId));
-    if (!page) return;
+    if (!page) return true;
     const config = inboxGetAiConfig(pageId);
-    if (!config.enabled || !config.apiKey) return;
+    if (!config.enabled || !config.apiKey) return true;
 
     // Check lock
-    if (inboxState.aiReplying.has(conversation.id)) return;
-    if (inboxState.aiDisabledConvs.has(conversation.id)) return;
+    if (inboxState.aiReplying.has(conversation.id)) return true;
+    if (inboxState.aiDisabledConvs.has(conversation.id)) return true;
 
     const messages = conversation.messages?.data || [];
-    if (messages.length === 0) return;
+    if (messages.length === 0) return true;
     const sorted = [...messages].sort(
       (a, b) => new Date(a.created_time || 0) - new Date(b.created_time || 0),
     );
     const last = sorted[sorted.length - 1];
-    if (!inboxIsCustomerMessage(last, conversation)) return;
+    if (!inboxIsCustomerMessage(last, conversation)) return true;
 
     // Check if already replied to this message
-    if (inboxState.aiReplied[conversation.id] === last.id) return;
+    if (inboxState.aiReplied[conversation.id] === last.id) return true;
     if (sorted.length >= 2) {
       const prev = sorted[sorted.length - 2];
       if (
@@ -4795,7 +5202,7 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         inboxState.aiReplied[conversation.id] === prev.id
       ) {
         inboxState.aiReplied[conversation.id] = last.id;
-        return;
+        return true;
       }
     }
 
@@ -4811,7 +5218,7 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         console.log(
           `📍 Conv ${inboxGetContact(conversation)}: phát hiện địa chỉ → tắt AI`,
         );
-        return;
+        return true;
       }
 
       // Tự động tắt AI nếu khách gửi số điện thoại
@@ -4820,7 +5227,7 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         console.log(
           `📱 Conv ${inboxGetContact(conversation)}: phát hiện số điện thoại → tắt AI`,
         );
-        return;
+        return true;
       }
 
       const history = sorted.slice(-10).map((m) => ({
@@ -4844,7 +5251,7 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         messages: history,
       });
 
-      if (!aiReply) return;
+      if (!aiReply) return false;
 
       // 1. Kiểm tra xem đây có phải là tin nhắn đầu tiên của Bot với khách hàng không
       const allMsgs = conversation.messages?.data || [];
@@ -4886,7 +5293,10 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         inboxState.aiReplied[conversation.id] = last.id;
         await inboxStorageSet("inboxAiReplied", inboxState.aiReplied);
         console.log(`✅ AI đã trả lời cho ${inboxGetContact(conversation)}`);
+        return true;
       }
+      // Gửi tin nhắn thất bại → báo false để thử lại
+      return false;
     } catch (error) {
       console.error(`❌ inboxAutoReplyConversation lỗi:`, error);
       const isJapanEuError =
@@ -4925,7 +5335,10 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
 🔗 <a href="${metaSuiteUrl}">👉 BẤM VÀO ĐÂY ĐỂ VÀO CHAT NGAY</a>
         `.trim();
         await inboxSendTelegramAlert(alertHtml).catch(() => {});
+        return true;
       }
+      // ⚡ Lỗi khác (mạng, rate limit OpenAI) → trả false để thử lại ở vòng sau
+      return false;
     } finally {
       inboxState.aiReplying.delete(conversation.id);
     }
@@ -5006,15 +5419,49 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
   }
 
   /**
+   * 🔑 Lấy Page Access Token DÁN TAY của 1 page (nếu người dùng nhập).
+   *    Nguồn: ô "Page Access Token" trong panel ⚙️ của từng Page.
+   *    Đây là nguồn ưu tiên CAO NHẤT — không cần User Token, không cần
+   *    trao đổi, không bị ảnh hưởng bởi rate limit trao đổi token.
+   */
+  function inboxGetManualPageToken(pageId) {
+    if (!pageId) return "";
+    const key = String(pageId);
+    // 1) Token đang gõ (chưa qua debounce) — ưu tiên để phản hồi tức thì
+    const pending = inboxState._pendingPageTokens?.[key];
+    if (pending !== undefined) return String(pending).trim();
+    // 2) Token đã lưu
+    const saved = inboxState.pageTokens?.[key] || "";
+    if (saved) return String(saved).trim();
+    // 3) Đọc trực tiếp từ ô input (trường hợp DOM vừa render)
+    try {
+      const el = document.querySelector(
+        `.ai-page-token[data-page-id="${CSS.escape(key)}"]`,
+      );
+      const v = el?.value?.trim();
+      if (v) return v;
+    } catch (e) {
+      // ignore
+    }
+    return "";
+  }
+
+  /**
    * Lấy accessToken hiệu lực cho 1 page trong Inbox:
-   *   1) Ưu tiên page.accessToken (lấy từ me/accounts - thường là Page Token)
-   *   2) Nếu rỗng, dùng User Token (từ ô tokenInput) gọi inboxExchangePageToken
+   *   1) ƯU TIÊN CAO NHẤT: Page Access Token dán tay của user (nếu có)
+   *   2) page.accessToken (lấy từ me/accounts - thường là Page Token)
+   *   3) Nếu rỗng, dùng User Token (từ ô tokenInput) gọi inboxExchangePageToken
    *      để trao đổi thành Page Token (có cache + backoff 368)
-   *   3) Trả về chuỗi rỗng nếu không lấy được -> caller sẽ bỏ qua page đó
+   *   4) Trả về chuỗi rỗng nếu không lấy được -> caller sẽ bỏ qua page đó
    */
   async function inboxResolvePageToken(page) {
     if (!page) return "";
+    // 1) Token dán tay — ưu tiên cao nhất
+    const manual = inboxGetManualPageToken(page.id);
+    if (manual) return manual;
+    // 2) Token đã lấy sẵn
     if (page.accessToken) return page.accessToken;
+    // 3) Trao đổi từ User Token
     const userToken = document.getElementById("tokenInput")?.value.trim() || "";
     if (!userToken) return "";
     return await inboxExchangePageToken(page.id, userToken);
@@ -5050,6 +5497,12 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       inboxState.selectedPageIds = new Set(
         savedIds.filter((id) => availableIds.has(String(id))).map(String),
       );
+      // 🔑 ÁP token dán tay lên page.accessToken (ưu tiên cao nhất)
+      for (const page of inboxState.pages) {
+        page.autoToken = page.accessToken || "";
+        const manual = inboxState.pageTokens?.[String(page.id)];
+        if (manual) page.accessToken = manual;
+      }
       // Lưu cache token và pages để tránh gọi API nhiều lần
       await inboxStorageSet("inboxCachedToken", token);
       await inboxStorageSet("inboxCachedPages", inboxState.pages);
@@ -5132,9 +5585,10 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       const userToken =
         document.getElementById("tokenInput")?.value.trim() || "";
       // Tìm các page đã chọn nhưng chưa có Page Token -> cần trao đổi
+      // 🔑 Nhưng nếu Page có token DÁN TAY thì không cần trao đổi gì cả.
       // Chạy TUẦN TỰ + delay 200ms để tránh Meta rate limit (368)
       const pagesNeedingToken = selectedPages.filter(
-        (page) => !page.accessToken,
+        (page) => !page.accessToken && !inboxGetManualPageToken(page.id),
       );
       if (pagesNeedingToken.length > 0) {
         if (inboxStatus)
@@ -5158,9 +5612,9 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         }
       }
       const pagePromises = selectedPages.map(async (page) => {
-        // Đã trao đổi ở trên, giờ chỉ cần dùng page.accessToken
-        // (nếu vẫn rỗng thì user Token thiếu scope, báo lỗi)
-        const effectiveToken = page.accessToken;
+        // 🔑 ƯU TIÊN: token dán tay → token đã lấy sẵn → trao đổi (đã xong ở trên)
+        const effectiveToken =
+          inboxGetManualPageToken(page.id) || page.accessToken;
         if (!effectiveToken) {
           errors.push(
             `${page.name}: chưa có Page Access Token (User Token thiếu quyền pages_show_list / pages_messaging)`,
@@ -5208,7 +5662,8 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       inboxState.lastPollAt = Date.now();
       inboxSyncBackgroundConfig();
       inboxTickLiveStatus();
-      chrome.runtime?.sendMessage?.({ type: "inbox-poll-now" }, () => {
+      // 🎯 User bấm nút "LÀM MỚI HỘP THƯ" → dùng force để bypass backoff token
+      chrome.runtime?.sendMessage?.({ type: "inbox-poll-force" }, () => {
         void chrome.runtime?.lastError;
       });
     }
@@ -5286,9 +5741,20 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       (item) => item.id === inboxState.selectedConversationId,
     );
     if (selected) inboxRenderChat(selected);
-    inboxMaybeAutoReplyAll().catch((e) =>
-      console.error("❌ inboxMaybeAutoReplyAll lỗi:", e),
-    );
+
+    // ⚡ TỐI ƯU TOKEN: Debounce 1.5s cho pipeline LLM.
+    // Background gửi data qua 2 kênh (storage.onChanged + runtime.onMessage)
+    // → trước đây inboxMaybeAutoReplyAll chạy 2 lần cho cùng dữ liệu,
+    // nhân đôi số request OpenAI. Giờ gộp lại chỉ chạy 1 lần.
+    if (inboxState.autoReplyDebounceTimer) {
+      clearTimeout(inboxState.autoReplyDebounceTimer);
+    }
+    inboxState.autoReplyDebounceTimer = setTimeout(() => {
+      inboxState.autoReplyDebounceTimer = null;
+      inboxMaybeAutoReplyAll().catch((e) =>
+        console.error("❌ inboxMaybeAutoReplyAll lỗi:", e),
+      );
+    }, 1500);
   }
 
   let inboxPollTimeout = null;
@@ -5481,6 +5947,12 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
 
   function inboxTickLiveStatus(prefix = "") {
     if (!inboxStatus) return;
+    // 🔴 Nếu đang báo lỗi token → giữ nguyên cảnh báo, không ghi đè
+    if (inboxState.tokenError) {
+      inboxStatus.innerText = "🔴 Token hết hạn";
+      inboxStatus.style.color = "#c92a2a";
+      return;
+    }
     const at = new Date(
       inboxState.lastPollAt || Date.now(),
     ).toLocaleTimeString();
@@ -6564,10 +7036,12 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         error: "Thiếu thông tin hội thoại hoặc nội dung tin nhắn.",
       };
     }
+    // 🔑 ƯU TIÊN: Page Access Token dán tay → token của Page → token conversation
     const pageToken =
-      conv.__pageToken ||
+      inboxGetManualPageToken(conv.__pageId) ||
       inboxState.pages.find((p) => String(p.id) === String(conv.__pageId))
-        ?.accessToken;
+        ?.accessToken ||
+      conv.__pageToken;
     if (!pageToken) {
       return { ok: false, error: "Không tìm thấy Page Token của Page này." };
     }
@@ -6898,9 +7372,10 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
         const nonLangTags = inboxGetNonLanguageTags(conv.id);
         if (nonLangTags.length > 0) return false;
         const pageToken =
-          conv.__pageToken ||
+          inboxGetManualPageToken(conv.__pageId) ||
           inboxState.pages.find((p) => String(p.id) === String(conv.__pageId))
-            ?.accessToken;
+            ?.accessToken ||
+          conv.__pageToken;
         if (!pageToken) return false;
         const recipientId = inboxGetRecipientId(conv);
         if (!recipientId) return false;
@@ -7184,7 +7659,9 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
     ?.addEventListener("click", async () => {
       inboxState.selectedPageIds = new Set(
         inboxState.pages
-          .filter((page) => page.accessToken)
+          .filter(
+            (page) => page.accessToken || inboxGetManualPageToken(page.id),
+          )
           .map((page) => page.id),
       );
       await inboxStorageSet("inboxSelectedPageIds", [
@@ -7209,6 +7686,19 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       if (inboxStatus)
         inboxStatus.innerText = `${inboxState.pages.length} Page · đã chọn 0`;
     });
+  // 🔑 Ghi khi user ĐANG GÕ token → dùng ngay, không cần bấm Lưu
+  inboxPageList?.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!target.classList?.contains("ai-page-token")) return;
+    const pageId = target.getAttribute("data-page-id");
+    const value = target.value || "";
+    inboxState._pendingPageTokens[String(pageId)] = value;
+    clearTimeout(inboxState._pageTokenSaveTimer);
+    inboxState._pageTokenSaveTimer = setTimeout(async () => {
+      await inboxApplyManualPageToken(pageId, value);
+    }, 700);
+  });
+
   inboxPageList?.addEventListener("change", async (event) => {
     const target = event.target;
     if (target.classList.contains("inbox-page-checkbox")) {
@@ -7216,10 +7706,11 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       if (target.checked) {
         inboxState.selectedPageIds.add(pageId);
         // LAZY: chỉ trao đổi Page Token khi user tích chọn page
+        // 🔑 Nếu Page đã có token DÁN TAY → khỏi cần trao đổi
         const page = inboxState.pages.find(
           (p) => String(p.id) === String(pageId),
         );
-        if (page && !page.accessToken) {
+        if (page && !page.accessToken && !inboxGetManualPageToken(pageId)) {
           const userToken =
             document.getElementById("tokenInput")?.value.trim() || "";
           if (userToken) {
@@ -7268,6 +7759,18 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       inboxRenderPageList();
       return;
     }
+    if (target.classList.contains("ai-page-token")) {
+      const pageId = target.getAttribute("data-page-id");
+      const value = target.value || "";
+      // 🔑 Cập nhật ngay vào map pending để mọi lệnh gọi API dùng token này
+      //    ngay cả khi user chưa bấm Lưu / chưa đợi debounce.
+      inboxState._pendingPageTokens[String(pageId)] = value;
+      clearTimeout(inboxState._pageTokenSaveTimer);
+      inboxState._pageTokenSaveTimer = setTimeout(async () => {
+        await inboxApplyManualPageToken(pageId, value);
+      }, 700);
+      return;
+    }
     const priceFileInput = target.closest(".ai-price-file-input");
     if (priceFileInput) {
       const pageId = priceFileInput.getAttribute("data-page-id");
@@ -7304,6 +7807,55 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
   });
 
   inboxPageList?.addEventListener("click", async (event) => {
+    // 🔑 Nút Ẩn/Hiện Page Access Token
+    const eyeBtn = event.target.closest(".ai-page-token-eye");
+    if (eyeBtn) {
+      const pageId = eyeBtn.getAttribute("data-page-id");
+      const input = inboxPageList.querySelector(
+        `.ai-page-token[data-page-id="${pageId}"]`,
+      );
+      if (input) {
+        const isHidden = input.type === "password";
+        input.type = isHidden ? "text" : "password";
+        eyeBtn.textContent = isHidden ? "🙈" : "👁️";
+        eyeBtn.title = isHidden ? "Ẩn token" : "Hiện token";
+      }
+      return;
+    }
+
+    // 🧪 Nút kiểm tra Page Access Token
+    const testTokenBtn = event.target.closest(".ai-page-token-test");
+    if (testTokenBtn) {
+      const pageId = testTokenBtn.getAttribute("data-page-id");
+      const input = inboxPageList.querySelector(
+        `.ai-page-token[data-page-id="${pageId}"]`,
+      );
+      const statusEl = inboxPageList.querySelector(
+        `.ai-page-token-status[data-page-id="${pageId}"]`,
+      );
+      const token = (input?.value || "").trim();
+      if (!token) {
+        if (statusEl)
+          statusEl.innerHTML =
+            '<span style="color:#d97706">⚠️ Chưa nhập token — hãy dán Page Access Token vào ô trên</span>';
+        return;
+      }
+      if (statusEl) statusEl.innerHTML = "⏳ Đang kiểm tra...";
+      testTokenBtn.disabled = true;
+      const result = await inboxTestManualPageToken(pageId, token);
+      testTokenBtn.disabled = false;
+      if (statusEl) {
+        statusEl.innerHTML = result.ok
+          ? `<span style="color:#16a34a">${result.message}</span>`
+          : `<span style="color:#dc2626">${result.message}</span>`;
+      }
+      // Nếu token hợp lệ → lưu & áp dụng ngay
+      if (result.ok) {
+        await inboxApplyManualPageToken(pageId, token);
+      }
+      return;
+    }
+
     const toggleBtn = event.target.closest(".ai-config-toggle");
     if (toggleBtn) {
       const pageId = toggleBtn.getAttribute("data-page-id");
@@ -7383,14 +7935,24 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
           panel.querySelector(".ai-model")?.value || INBOX_AI_DEFAULTS.model,
         apiKey: panel.querySelector(".ai-key")?.value || "",
         priceImages: cfg.priceImages || [],
+        // 🔑 Page Access Token dán tay
+        pageToken: panel.querySelector(".ai-page-token")?.value?.trim() || "",
       };
       await inboxSaveAiConfig(pageId, patch);
+      // 🔑 Lưu Page Access Token dán tay (ưu tiên cao nhất) + áp dụng ngay
+      await inboxApplyManualPageToken(pageId, patch.pageToken);
       const status = panel.querySelector(".ai-status");
       if (status) {
         status.textContent = "✅ Đã lưu";
         setTimeout(() => (status.textContent = ""), 2000);
       }
       inboxRenderPageList();
+      // ⚡ Xử lý ngay tin nhắn đang chờ sau khi bật AI / thêm API key
+      setTimeout(() => {
+        inboxMaybeAutoReplyAll().catch((e) =>
+          console.error("❌ inboxMaybeAutoReplyAll lỗi:", e),
+        );
+      }, 500);
       return;
     }
     const testBtn = event.target.closest(".ai-test");
@@ -7495,24 +8057,33 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       );
     });
     inboxLoadAiConfigs().finally(() => {
-      inboxRenderPageList();
+      // 🔑 Load Page Access Token dán tay sau khi load cấu hình AI
+      inboxLoadManualPageTokens().finally(() => {
+        inboxRenderPageList();
+        // Đồng bộ sang background để poll nền cũng dùng token ưu tiên
+        inboxSyncBackgroundConfig();
+      });
     });
   });
 
   function inboxSyncBackgroundConfig() {
     const token = document.getElementById("tokenInput")?.value.trim() || "";
     if (!chrome.storage?.local || !token) return;
+    // 🔑 ƯU TIÊN token dán tay cho từng Page khi đồng bộ sang background
+    const pagesForBg = inboxState.pages.map((p) => ({
+      id: p.id,
+      name: p.name,
+      access_token: inboxGetManualPageToken(p.id) || p.accessToken || "",
+      picture: { data: { url: p.picture } },
+    }));
     chrome.storage.local.set({
       inboxBgToken: token,
       inboxBgSelectedPageIds: [...inboxState.selectedPageIds],
       inboxBgFolder: inboxState.folder,
-      inboxBgPagesCached: inboxState.pages.map((p) => ({
-        id: p.id,
-        name: p.name,
-        access_token: p.accessToken,
-        picture: { data: { url: p.picture } },
-      })),
+      inboxBgPagesCached: pagesForBg,
       inboxBgPagesCachedAt: Date.now(),
+      // 🔑 Map token dán tay để background dùng ưu tiên
+      inboxManualPageTokens: { ...(inboxState.pageTokens || {}) },
     });
   }
 
@@ -7571,12 +8142,59 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
     ?.addEventListener("click", saveInboxBgCfg);
   loadInboxBgCfg();
 
+  // 🎯 Nạp trạng thái lỗi token từ storage khi mở dashboard
+  //    (để sau khi F5 vẫn thấy cảnh báo token hết hạn)
+  chrome.storage?.local?.get?.(
+    ["inboxTokenExpired", "inboxTokenErrorMessage", "inboxTokenErrorCode"],
+    (st) => {
+      if (!st?.inboxTokenExpired) return;
+      inboxState.tokenError = {
+        message:
+          st.inboxTokenErrorMessage || "Token Facebook không còn hiệu lực",
+        code: st.inboxTokenErrorCode || "",
+        backoffMinutes: 0,
+      };
+      inboxRenderTokenErrorBanner();
+      if (inboxStatus) {
+        inboxStatus.innerText = "🔴 Token hết hạn";
+        inboxStatus.style.color = "#c92a2a";
+      }
+    },
+  );
+
   chrome.storage?.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.inboxBgCache && Array.isArray(changes.inboxBgCache.newValue)) {
       inboxMergeConversations(changes.inboxBgCache.newValue);
       inboxState.lastPollAt = changes.inboxBgCacheAt?.newValue || Date.now();
       inboxTickLiveStatus();
+    }
+    // 🎯 Token hết hạn → hiện cảnh báo
+    if (
+      changes.inboxTokenExpired &&
+      changes.inboxTokenExpired.newValue === true
+    ) {
+      inboxState.tokenError = {
+        message:
+          changes.inboxTokenErrorMessage?.newValue ||
+          "Token Facebook không còn hiệu lực",
+        code: changes.inboxTokenErrorCode?.newValue || "",
+        backoffMinutes: 0,
+      };
+      inboxRenderTokenErrorBanner();
+      if (inboxStatus) {
+        inboxStatus.innerText = "🔴 Token hết hạn";
+        inboxStatus.style.color = "#c92a2a";
+      }
+    }
+    // 🎉 Token hồi sinh → xoá cảnh báo
+    if (
+      changes.inboxTokenExpired &&
+      changes.inboxTokenExpired.newValue === false
+    ) {
+      inboxState.tokenError = null;
+      inboxRenderTokenErrorBanner();
+      if (inboxStatus) inboxStatus.style.color = "";
     }
   });
 
@@ -7624,6 +8242,45 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
       console.log("❌ Không tìm thấy nút autoTokenBtn");
     }
   }
+
+  // ============================================================
+  // 🎯 MỤC 4: Đồng bộ fbToken → inboxBgToken ngay khi lấy token mới
+  //    Trước đây token mới chỉ nằm trong ô input + storage fbToken,
+  //    background vẫn dùng inboxBgToken cũ (đã hết hạn) → poll vô ích.
+  // ============================================================
+  let _lastSyncedBgToken = "";
+  async function inboxSyncTokenToBackground(newToken) {
+    const token = String(newToken || "").trim();
+    if (!token) return;
+    if (token === _lastSyncedBgToken) return;
+    _lastSyncedBgToken = token;
+    try {
+      await chrome.storage.local.set({ inboxBgToken: token });
+      // 🎯 Báo background: token đã mới → reset backoff + poll ngay
+      chrome.runtime?.sendMessage?.({ type: "inbox-token-refreshed" }, () => {
+        void chrome.runtime?.lastError;
+      });
+      console.log("🔄 Đã đồng bộ token mới sang background");
+      // Cập nhật UI nếu đang hiển thị lỗi token
+      inboxState.tokenError = null;
+      inboxRenderTokenErrorBanner();
+    } catch (e) {
+      console.warn("⚠️ Không đồng bộ token sang background được:", e.message);
+    }
+  }
+
+  // Listener: khi fbToken đổi (do nút lấy token tự động hoặc OAuth lưu vào)
+  chrome.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    const changed = changes.fbToken;
+    if (!changed) return;
+    const newToken = changed.newValue;
+    if (!newToken) return;
+    // Cập nhật ô input cho khớp
+    const ti = document.getElementById("tokenInput");
+    if (ti && ti.value !== newToken) ti.value = newToken;
+    inboxSyncTokenToBackground(newToken);
+  });
 
   // ============================================================
   // SHARE PAGE - Chia sẻ Page cho nhiều FB cá nhân

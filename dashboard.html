@@ -2913,12 +2913,15 @@
       <div id="ccStats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px"></div>
 
       <!-- Bảng nhóm đang chạy -->
-      <h3 style="font-size:14px;margin:0 0 10px;color:#0f172a">🔄 NHÓM ĐANG CHẠY (chọn để giám sát)</h3>
+      <h3 style="font-size:14px;margin:0 0 10px;color:#0f172a">
+        🔄 NHÓM ĐANG BẬT &amp; CHIẾN DỊCH ĐANG BẬT (chọn để giám sát)
+      </h3>
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
           <input type="checkbox" id="ccSelectAll" style="width:16px;height:16px;cursor:pointer" />
           Chọn tất cả
         </label>
+        <span id="ccHiddenInfo" style="font-size:11px;color:#8c939d"></span>
       </div>
       <div class="table-wrapper">
         <table>
@@ -2945,7 +2948,14 @@
       </div>
 
       <!-- Bảng nhóm đang giám sát -->
-      <h3 style="font-size:14px;margin:16px 0 10px;color:#0f172a">🛡️ NHÓM ĐANG ĐƯỢC GIÁM SÁT</h3>
+      <div style="display:flex;align-items:center;gap:10px;margin:16px 0 10px;flex-wrap:wrap">
+        <h3 style="font-size:14px;margin:0;color:#0f172a">🛡️ NHÓM ĐANG ĐƯỢC GIÁM SÁT</h3>
+        <span id="ccMonCount" style="font-size:11px;color:#8c939d"></span>
+        <div style="flex:1"></div>
+        <button id="ccBtnClearMonitored" class="btn btn-red" style="width:auto;padding:7px 14px;font-size:12px;margin:0">
+          🗑️ XOÁ TOÀN BỘ NHÓM THEO DÕI
+        </button>
+      </div>
       <div class="table-wrapper">
         <table>
           <thead>
@@ -2967,7 +2977,14 @@
       </div>
 
       <!-- Bảng nhóm đã tắt tự động -->
-      <h3 style="font-size:14px;margin:16px 0 10px;color:#991b1b">🛑 NHÓM ĐÃ TẮT TỰ ĐỘNG</h3>
+      <div style="display:flex;align-items:center;gap:10px;margin:16px 0 10px;flex-wrap:wrap">
+        <h3 style="font-size:14px;margin:0;color:#991b1b">🛑 NHÓM ĐÃ TẮT TỰ ĐỘNG</h3>
+        <span id="ccPausedCount" style="font-size:11px;color:#8c939d"></span>
+        <div style="flex:1"></div>
+        <button id="ccBtnClearPaused" class="btn btn-red" style="width:auto;padding:7px 14px;font-size:12px;margin:0">
+          🗑️ XOÁ TOÀN BỘ DANH SÁCH
+        </button>
+      </div>
       <div class="table-wrapper">
         <table>
           <thead>
@@ -2980,10 +2997,11 @@
               <th style="text-align:right">CPM</th>
               <th>LÝ DO TẮT</th>
               <th>THỜI ĐIỂM TẮT</th>
+              <th style="width:170px;text-align:center">THAO TÁC</th>
             </tr>
           </thead>
           <tbody id="ccPausedBody">
-            <tr><td colspan="8" style="text-align:center;color:#606770;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>
+            <tr><td colspan="9" style="text-align:center;color:#606770;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>
           </tbody>
         </table>
       </div>

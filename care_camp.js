@@ -228,7 +228,7 @@
 
         const url =
           `${GRAPH}/${id}/adsets?fields=name,optimization_goal,effective_status,status,` +
-          `campaign{id,name},insights.date_preset(today){spend,actions,clicks,impressions,cpm,inline_link_clicks,ctr,cpc}&` +
+          `campaign{id,name,effective_status,status},insights.date_preset(today){spend,actions,clicks,impressions,cpm,inline_link_clicks,ctr,cpc}&` +
           `filtering=${filtering}&limit=500&access_token=${encodeURIComponent(token)}`;
         const data = await fetch(url).then((r) => r.json());
         if (data.error) {
@@ -292,9 +292,15 @@
             tag: extractTag(adset.name),
             campaignName: adset.campaign?.name || "",
             campaignId: adset.campaign?.id || "",
+            campaignStatus:
+              adset.campaign?.effective_status || adset.campaign?.status || "",
             optimizationGoal: adset.optimization_goal || "",
             effectiveStatus: adset.effective_status || adset.status || "",
             isPaused: (adset.effective_status || adset.status) === "PAUSED",
+            // Chiến dịch có đang bật không (effective_status = ACTIVE)
+            isCampaignActive:
+              (adset.campaign?.effective_status || adset.campaign?.status) ===
+              "ACTIVE",
             metrics,
             inboxCount,
             cpl,
@@ -332,12 +338,21 @@
 
   /* -------------------------------- Render -------------------------------- */
   function renderStatCards() {
-    const delivering = state.rows.filter((r) => !r.error && r.delivering);
+    // Chỉ tính nhóm đang bật và thuộc chiến dịch đang bật (giống bảng hiển thị)
+    const active = state.rows.filter(
+      (r) => !r.error && !r.isPaused && r.isCampaignActive,
+    );
+    const delivering = active.filter((r) => r.delivering);
     const totalSpend = delivering.reduce((s, r) => s + r.spend, 0);
     const totalResult = delivering.reduce((s, r) => s + r.resultCount, 0);
     const breached = delivering.filter((r) => isBreached(r)).length;
+    const activeCampaigns = new Set(
+      active.map((r) => r.campaignId || r.campaignName).filter(Boolean),
+    ).size;
     const cards = [
-      { label: "Nhóm đang phân phối", value: delivering.length, color: "#1877f2" },
+      { label: "Nhóm đang bật", value: active.length, color: "#1877f2" },
+      { label: "Chiến dịch đang bật", value: activeCampaigns, color: "#7950f2" },
+      { label: "Nhóm đang phân phối", value: delivering.length, color: "#0e7490" },
       { label: "Tổng tiêu hôm nay", value: money(totalSpend) + " đ", color: "#d97706" },
       { label: "Tổng kết quả", value: money(totalResult), color: "#31a24c" },
       { label: "Vượt ngưỡng", value: breached, color: breached ? "#fa383e" : "#65676b" },
@@ -363,10 +378,16 @@
   function renderRowsTable() {
     const tb = $("ccTableBody");
     if (!tb) return;
-    const rows = state.rows.filter((r) => !r.error);
+    // Chỉ hiển thị nhóm ĐANG BẬT (ACTIVE) và thuộc chiến dịch ĐANG BẬT (ACTIVE)
+    const rows = state.rows.filter(
+      (r) => !r.error && !r.isPaused && r.isCampaignActive,
+    );
+    const hiddenCount = state.rows.filter(
+      (r) => !r.error && (r.isPaused || !r.isCampaignActive),
+    ).length;
     if (!rows.length) {
       tb.innerHTML =
-        '<tr><td colspan="11" style="text-align:center;color:#65676b;padding:20px">Chưa có dữ liệu — bấm "Tải danh sách nhóm".</td></tr>';
+        '<tr><td colspan="12" style="text-align:center;color:#65676b;padding:20px">Chưa có nhóm nào đang bật — bấm "Tải danh sách nhóm".</td></tr>';
       return;
     }
     tb.innerHTML = rows
@@ -381,7 +402,9 @@
           <input type="checkbox" class="cc-check" value="${esc(r.adsetId)}" ${watched ? "checked" : ""} />
         </td>
         <td style="font-size:11px;color:#65676b">${esc(r.accountName)}</td>
-        <td style="color:#1877f2;font-size:12px;font-weight:bold">${esc(r.campaignName || "-")}</td>
+        <td style="color:#1877f2;font-size:12px;font-weight:bold">${esc(r.campaignName || "-")}
+          <div style="font-size:10px;color:#31a24c;font-weight:bold">🟢 ${esc(r.campaignStatus || "ACTIVE")}</div>
+        </td>
         <td style="font-weight:bold;font-size:13px">${esc(r.name)}
           ${r.tag ? `<span style="background:#f3e8ff;color:#7950f2;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:bold">${esc(r.tag)}</span>` : ""}
           <div style="font-size:10px;color:#8c939d;font-family:monospace">${esc(r.adsetId)}</div>
@@ -424,11 +447,35 @@
       </tr>`;
       })
       .join("");
+
+    // Thông báo số nhóm bị ẩn (đã tắt hoặc chiến dịch đã tắt)
+    const info = $("ccHiddenInfo");
+    if (info) {
+      const pausedAdsets = state.rows.filter((r) => !r.error && r.isPaused).length;
+      const pausedCampaigns = state.rows.filter(
+        (r) => !r.error && !r.isPaused && !r.isCampaignActive,
+      ).length;
+      const parts = [];
+      if (pausedAdsets) parts.push(`${pausedAdsets} nhóm đã tắt`);
+      if (pausedCampaigns) parts.push(`${pausedCampaigns} nhóm thuộc chiến dịch đã tắt`);
+      info.textContent = parts.length
+        ? `🚫 Đang ẩn: ${parts.join(" · ")}`
+        : "";
+    }
   }
 
   function renderMonitoredTable() {
     const tb = $("ccMonBody");
     if (!tb) return;
+
+    // Đếm số nhóm trong tiêu đề
+    const cnt = $("ccMonCount");
+    if (cnt) {
+      cnt.textContent = state.monitored.length
+        ? `${state.monitored.length} nhóm`
+        : "";
+    }
+
     if (!state.monitored.length) {
       tb.innerHTML =
         '<tr><td colspan="7" style="text-align:center;color:#65676b;padding:16px">Chưa có nhóm nào được giám sát.</td></tr>';
@@ -472,9 +519,18 @@
   function renderAutoPausedTable() {
     const tb = $("ccPausedBody");
     if (!tb) return;
+
+    // Đếm số nhóm trong tiêu đề
+    const cnt = $("ccPausedCount");
+    if (cnt) {
+      cnt.textContent = state.autoPaused.length
+        ? `${state.autoPaused.length} nhóm`
+        : "";
+    }
+
     if (!state.autoPaused.length) {
       tb.innerHTML =
-        '<tr><td colspan="8" style="text-align:center;color:#65676b;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>';
+        '<tr><td colspan="9" style="text-align:center;color:#65676b;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>';
       return;
     }
     tb.innerHTML = state.autoPaused
@@ -492,6 +548,10 @@
         <td style="font-size:11px;color:#65676b">${esc(
           p.pausedAt ? new Date(p.pausedAt).toLocaleString("vi-VN") : "-",
         )}</td>
+        <td style="text-align:center;white-space:nowrap">
+          <button class="cc-btn-resume-paused" data-id="${esc(p.adsetId)}" title="Bật lại nhóm này trên Facebook" style="padding:4px 9px;font-size:11px;cursor:pointer;background:#31a24c;color:#fff;border:none;border-radius:4px;margin-right:4px">▶️ Bật lại</button>
+          <button class="cc-btn-del-paused" data-id="${esc(p.adsetId)}" title="Xoá nhóm này khỏi danh sách đã tắt tự động" style="padding:4px 9px;font-size:11px;cursor:pointer;background:#fa383e;color:#fff;border:none;border-radius:4px">🗑️ Xoá</button>
+        </td>
       </tr>`,
       )
       .join("");
@@ -659,11 +719,14 @@
       let resumed = 0;
 
       // 1. Tắt nhóm đang giám sát vượt ngưỡng
+      //    Bỏ qua nhóm thuộc chiến dịch đã tắt (không thể tắt con của chiến dịch tắt)
       for (const row of rows.filter((r) => !r.error)) {
         const m = state.monitored.find(
           (x) => String(x.adsetId) === String(row.adsetId),
         );
         if (!m) continue;
+        if (row.isPaused) continue; // đã tắt rồi
+        if (!row.isCampaignActive) continue; // chiến dịch đã tắt
         if (!isBreached(row)) continue;
 
         const res = await setAdsetStatus(token, row.adsetId, "PAUSED");
@@ -714,6 +777,8 @@
       for (const p of [...state.autoPaused]) {
         const row = rows.find((r) => String(r.adsetId) === String(p.adsetId));
         if (!row || row.error) continue; // không còn đọc được -> giữ nguyên trạng thái tắt
+        // Chiến dịch cha đã tắt -> không bật lại con (sẽ bật khi bật lại chiến dịch)
+        if (!row.isCampaignActive) continue;
         const lim = {
           maxSpend: p.maxSpend || state.settings.maxSpend,
           maxPrice: p.maxPrice || state.settings.maxPrice,
@@ -766,18 +831,55 @@
   async function doResumeAdset(adsetId) {
     const token = getToken();
     if (!token) return toast("❌ Chưa có Access Token.", "err");
-    const res = await setAdsetStatus(token, adsetId, "ACTIVE");
-    if (res.success) {
-      const p = state.autoPaused.find((x) => String(x.adsetId) === String(adsetId));
-      state.autoPaused = state.autoPaused.filter(
-        (x) => String(x.adsetId) !== String(adsetId),
-      );
-      pushLog("manual_resume", p?.name || adsetId, p?.campaignName || "", "Bật lại thủ công");
-      await saveState();
-      renderAll();
-      toast("✅ Đã bật lại nhóm.", "ok");
-    } else {
-      toast("❌ " + (res?.error?.message || "Không bật lại được"), "err");
+    const btn = document.querySelector(
+      `.cc-btn-resume-paused[data-id="${CSS.escape(String(adsetId))}"]`,
+    );
+    if (btn) {
+      btn.disabled = true;
+      btn.innerText = "⏳ Đang bật...";
+    }
+    try {
+      const res = await setAdsetStatus(token, adsetId, "ACTIVE");
+      if (res.success) {
+        const p = state.autoPaused.find(
+          (x) => String(x.adsetId) === String(adsetId),
+        );
+        state.autoPaused = state.autoPaused.filter(
+          (x) => String(x.adsetId) !== String(adsetId),
+        );
+        // Cập nhật lại trạng thái trong bộ nhớ cho đúng (không còn PAUSED)
+        const row = state.rows.find(
+          (r) => String(r.adsetId) === String(adsetId),
+        );
+        if (row) {
+          row.isPaused = false;
+          row.effectiveStatus = "ACTIVE";
+        }
+        pushLog(
+          "manual_resume",
+          p?.name || adsetId,
+          p?.campaignName || "",
+          "Bật lại thủ công từ danh sách nhóm đã tắt tự động",
+        );
+        await saveState();
+        renderAll();
+        toast(
+          `✅ Đã bật lại nhóm "${p?.name || adsetId}". Nhóm sẽ hiện lại ở bảng nhóm đang bật.`,
+          "ok",
+        );
+      } else {
+        toast("❌ " + (res?.error?.message || "Không bật lại được"), "err");
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "▶️ Bật lại";
+        }
+      }
+    } catch (e) {
+      toast("❌ " + (e?.message || e), "err");
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = "▶️ Bật lại";
+      }
     }
   }
 
@@ -805,6 +907,67 @@
     btn.innerText = "✅ Đã lưu";
     setTimeout(() => (btn.innerText = "Lưu"), 1500);
     renderAll();
+  }
+
+  /* --------------------- Xoá nhóm đã tắt tự động --------------------- */
+  /** Xoá 1 nhóm khỏi danh sách "đã tắt tự động" (KHÔNG bật lại nhóm trên Facebook) */
+  async function removeAutoPaused(adsetId) {
+    const p = state.autoPaused.find((x) => String(x.adsetId) === String(adsetId));
+    if (!p) return;
+    state.autoPaused = state.autoPaused.filter(
+      (x) => String(x.adsetId) !== String(adsetId),
+    );
+    pushLog(
+      "info",
+      p.name,
+      p.campaignName,
+      "Đã xoá khỏi danh sách nhóm tắt tự động (nhóm vẫn đang tắt trên Facebook)",
+    );
+    await saveState();
+    renderAll();
+    toast(`🗑️ Đã xoá "${p.name || adsetId}" khỏi danh sách tắt tự động.`, "ok");
+  }
+
+  /** Xoá toàn bộ danh sách "đã tắt tự động" */
+  async function clearAllAutoPaused() {
+    if (!state.autoPaused.length) {
+      toast("ℹ️ Danh sách nhóm đã tắt tự động đang trống.", "info");
+      return;
+    }
+    const n = state.autoPaused.length;
+    const ok = window.confirm(
+      `Xoá toàn bộ ${n} nhóm khỏi danh sách "đã tắt tự động"?\n\n` +
+        `⚠️ Lưu ý: các nhóm này VẪN ĐANG TẮT trên Facebook.\n` +
+        `Thao tác này chỉ xoá lịch sử theo dõi trong extension.`,
+    );
+    if (!ok) return;
+    state.autoPaused = [];
+    pushLog("info", "-", "", `Đã xoá toàn bộ ${n} nhóm khỏi danh sách tắt tự động`);
+    await saveState();
+    renderAll();
+    toast(`🗑️ Đã xoá ${n} nhóm khỏi danh sách tắt tự động.`, "ok");
+  }
+
+  /** Xoá toàn bộ nhóm đang theo dõi (dừng giám sát + xoá danh sách) */
+  async function clearAllMonitored() {
+    if (!state.monitored.length) {
+      toast("ℹ️ Chưa có nhóm nào đang được giám sát.", "info");
+      return;
+    }
+    const n = state.monitored.length;
+    const ok = window.confirm(
+      `Xoá toàn bộ ${n} nhóm khỏi danh sách đang theo dõi?\n\n` +
+        `⚠️ Hệ thống sẽ DỪNG tự động tắt các nhóm này.\n` +
+        `(Các nhóm không bị tắt trên Facebook.)`,
+    );
+    if (!ok) return;
+    state.monitored = [];
+    state.running = false;
+    stopTimer();
+    pushLog("info", "-", "", `Đã xoá toàn bộ ${n} nhóm đang theo dõi và dừng giám sát`);
+    await saveState();
+    renderAll();
+    toast(`🗑️ Đã xoá ${n} nhóm đang theo dõi và dừng giám sát.`, "ok");
   }
 
   /* ------------------------------ Timer quét ------------------------------ */
@@ -877,8 +1040,17 @@
         renderAll();
       } else if (t.classList?.contains("cc-btn-resume")) {
         doResumeAdset(t.getAttribute("data-id"));
+      } else if (t.classList?.contains("cc-btn-del-paused")) {
+        removeAutoPaused(t.getAttribute("data-id"));
+      } else if (t.classList?.contains("cc-btn-resume-paused")) {
+        doResumeAdset(t.getAttribute("data-id"));
       }
     });
+
+    // Nút xoá toàn bộ danh sách nhóm đã tắt tự động
+    $("ccBtnClearPaused")?.addEventListener("click", clearAllAutoPaused);
+    // Nút xoá toàn bộ nhóm đang theo dõi
+    $("ccBtnClearMonitored")?.addEventListener("click", clearAllMonitored);
 
     // Khi bấm menu ✂️ → đồng bộ token/ID từ trang Bảng Chỉ Số
     document.getElementById("nav-carecamp")?.addEventListener("click", () => {

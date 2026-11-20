@@ -787,11 +787,11 @@ document.addEventListener("DOMContentLoaded", async () => {
           }
         } catch (e) {
           autoTokenBtn.innerText = "❌ LỖI TRUY CẬP";
-          alert("Kiểm tra lại quyền trong manifest.json");
-          setTimeout(
-            () => (autoTokenBtn.innerText = "⚡ LẤY TOKEN TỰ ĐỘNG"),
-            3000,
-          );
+          
+          // setTimeout(
+          //   () => (autoTokenBtn.innerText = "⚡ LẤY TOKEN TỰ ĐỘNG"),
+          //   3000,
+          // );
         }
       });
     }

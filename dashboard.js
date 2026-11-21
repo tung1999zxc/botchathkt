@@ -244,45 +244,40 @@ window.checkAndRaiseThresholdForTag = async function (tag) {
       const inboxCount = await window.countInboxConversationsByTag(adsetName);
       if (inboxCount === null) continue;
 
-      const prev = window.prevHieuQua[adsetId];
-      if (prev !== undefined && inboxCount > prev) {
-        const diff = inboxCount - prev;
-        const local = window.localConfigs[adsetId] || {};
-        const currentMaxSpend = parseFloat(local.maxSpend) || globalMaxSpend;
-        const currentMaxPrice = parseFloat(local.maxPrice) || globalMaxPrice;
-        const newMaxSpend = currentMaxSpend + currentMaxPrice * diff;
+      // Dùng hàm nâng ngưỡng dùng chung (nguồn: localStorage["fb_local_configs"])
+      const raiseRes = window.raiseThresholdForAdset(
+        adsetId,
+        inboxCount,
+        {
+          maxSpend: globalMaxSpend,
+          maxPrice: globalMaxPrice,
+          maxCpm: globalMaxCpm,
+        },
+      );
 
-        window.localConfigs[adsetId] = {
-          ...local,
-          maxSpend: newMaxSpend,
-          maxPrice: currentMaxPrice,
-          maxCpm: local.maxCpm || globalMaxCpm,
-          originalMaxSpend: local.originalMaxSpend || globalMaxSpend,
-          originalMaxPrice: local.originalMaxPrice || globalMaxPrice,
-          originalMaxCpm: local.originalMaxCpm || globalMaxCpm,
-        };
-
-        localStorage.setItem(
-          "fb_local_configs",
-          JSON.stringify(window.localConfigs),
-        );
+      if (raiseRes.raised) {
+        const diff = raiseRes.diff;
+        const newMaxSpend = raiseRes.newMaxSpend;
 
         // Cập nhật giá trị ô input
         const spendInp = row.querySelector(".local-spend");
         if (spendInp) spendInp.value = newMaxSpend;
 
+        // Đồng bộ bảng "Tắt Camp Tự Động" (dùng chung localConfigs)
+        if (typeof window.careCampRefreshThresholds === "function") {
+          window.careCampRefreshThresholds();
+        }
+
         console.log(
-          `🚀 [REALTIME CPL] Nâng ngưỡng nhóm ${adsetName}: ${currentMaxSpend}đ -> ${newMaxSpend}đ (+${diff} HT)`,
+          `🚀 [REALTIME CPL] Nâng ngưỡng nhóm ${adsetName}: ${raiseRes.currentMaxSpend}đ -> ${newMaxSpend}đ (+${diff} HT)`,
         );
 
         if (typeof sendTelegramAlert === "function") {
           sendTelegramAlert(
-            `🚀 <b>NÂNG NGƯỠNG TỰ ĐỘNG (CPL - INBOX)</b> 🚀\n- Nhóm: ${adsetName}\n- Hội thoại mới: ${inboxCount} (+${diff})\n- Ngưỡng tiêu cũ: ${currentMaxSpend.toLocaleString("vi-VN")}đ\n- Ngưỡng tiêu MỚI: <b>${newMaxSpend.toLocaleString("vi-VN")}đ</b>`,
+            `🚀 <b>NÂNG NGƯỠNG TỰ ĐỘNG (CPL - INBOX)</b> 🚀\n- Nhóm: ${adsetName}\n- Hội thoại mới: ${inboxCount} (+${diff})\n- Ngưỡng tiêu cũ: ${raiseRes.currentMaxSpend.toLocaleString("vi-VN")}đ\n- Ngưỡng tiêu MỚI: <b>${newMaxSpend.toLocaleString("vi-VN")}đ</b>`,
           );
         }
       }
-
-      window.prevHieuQua[adsetId] = inboxCount;
     }
   } catch (e) {
     console.warn("Lỗi checkAndRaiseThresholdForTag:", e);
@@ -329,6 +324,88 @@ window.localConfigs = JSON.parse(
   localStorage.getItem("fb_local_configs") || "{}",
 );
 
+/* =========================================================================
+ * 🚀 HÀM NÂNG NGƯỠNG DÙNG CHUNG — nguồn cấu hình duy nhất
+ * -------------------------------------------------------------------------
+ * localStorage["fb_local_configs"] là nguồn sự thật duy nhất cho ngưỡng
+ * tiền / giá / CPM của từng nhóm QC. Cả 3 bảng dùng chung:
+ *   1. Bảng Chỉ Số          (#resultTableBody)
+ *   2. Bảng Auto-Pause      (#apTableBody)
+ *   3. Bảng Tắt Camp        (#ccTableBody)  ← care_camp.js
+ *
+ * window.prevHieuQua là cache đếm KQ dùng chung → mỗi lần KQ tăng chỉ bị
+ * nâng ngưỡng ĐÚNG 1 LẦN, không nhân đôi khi cả 2 bảng cùng quét.
+ * ========================================================================= */
+window.raiseThresholdForAdset = function (
+  adsetId,
+  effectiveCount,
+  opts = {},
+) {
+  const id = String(adsetId);
+  if (!window.prevHieuQua) window.prevHieuQua = {};
+
+  const globalMaxSpend = Number(opts.maxSpend) || 10000;
+  const globalMaxPrice = Number(opts.maxPrice) || 12000;
+  const globalMaxCpm = Number(opts.maxCpm) || 50000;
+
+  const prev = window.prevHieuQua[id];
+  const cur = Number(effectiveCount) || 0;
+
+  // Chưa có mốc so sánh → chỉ ghi nhận, chưa nâng
+  if (prev === undefined) {
+    window.prevHieuQua[id] = cur;
+    return { raised: false, diff: 0, currentMaxSpend: 0, newMaxSpend: 0 };
+  }
+  if (cur <= prev) {
+    window.prevHieuQua[id] = cur;
+    return { raised: false, diff: 0, currentMaxSpend: 0, newMaxSpend: 0 };
+  }
+
+  const diff = cur - prev;
+  if (!window.localConfigs) window.localConfigs = {};
+  const local = window.localConfigs[id] || {};
+
+  const currentMaxSpend = parseFloat(local.maxSpend) || globalMaxSpend;
+  const currentMaxPrice =
+    parseFloat(local.maxPrice ?? local.maxCpr) || globalMaxPrice;
+  const currentMaxCpm = parseFloat(local.maxCpm) || globalMaxCpm;
+
+  // maxSpend mới = ngưỡng cũ + (ngưỡng giá × số KQ tăng thêm)
+  const newMaxSpend = currentMaxSpend + currentMaxPrice * diff;
+
+  window.localConfigs[id] = {
+    ...local,
+    maxSpend: newMaxSpend,
+    maxPrice: currentMaxPrice,
+    maxCpm: currentMaxCpm,
+    originalMaxSpend: local.originalMaxSpend || globalMaxSpend,
+    originalMaxPrice: local.originalMaxPrice || globalMaxPrice,
+    originalMaxCpm: local.originalMaxCpm || globalMaxCpm,
+  };
+
+  // Lưu xuống localStorage để không mất khi F5
+  try {
+    localStorage.setItem(
+      "fb_local_configs",
+      JSON.stringify(window.localConfigs),
+    );
+  } catch (e) {
+    console.warn("Không lưu được fb_local_configs:", e);
+  }
+
+  // Cập nhật mốc so sánh
+  window.prevHieuQua[id] = cur;
+
+  return {
+    raised: true,
+    diff,
+    currentMaxSpend,
+    newMaxSpend,
+    currentMaxPrice,
+    currentMaxCpm,
+  };
+};
+
 window.saveLocalConfig = function (adsetId, btn) {
   const row = btn.closest("tr");
 
@@ -363,6 +440,11 @@ window.saveLocalConfig = function (adsetId, btn) {
   }
 
   localStorage.setItem("fb_local_configs", JSON.stringify(window.localConfigs));
+
+  // Đồng bộ bảng "Tắt Camp Tự Động" (dùng chung localConfigs)
+  if (typeof window.careCampRefreshThresholds === "function") {
+    window.careCampRefreshThresholds();
+  }
 
   btn.innerText = "✅ Đã Lưu";
   btn.style.background = "#28a745";
@@ -415,6 +497,11 @@ window.resetLocalConfig = function (adsetId, btn) {
   row.querySelector(".local-spend").value = config.maxSpend;
   row.querySelector(".local-price").value = config.maxPrice;
   row.querySelector(".local-cpm").value = config.maxCpm;
+
+  // Đồng bộ bảng "Tắt Camp Tự Động" (dùng chung localConfigs)
+  if (typeof window.careCampRefreshThresholds === "function") {
+    window.careCampRefreshThresholds();
+  }
 
   // Hiệu ứng
   btn.innerText = "✅ Đã Reset";
@@ -1420,42 +1507,21 @@ document.addEventListener("DOMContentLoaded", async () => {
                     : "0 đ";
 
                 // --- LOGIC TỰ ĐỘNG NÂNG NGƯỠNG MAXSPEND (Hỗ trợ CPL, CPC & CPR) ---
-                if (
-                  window.prevHieuQua[adset.id] !== undefined &&
-                  effectiveCount > window.prevHieuQua[adset.id]
-                ) {
-                  const diff = effectiveCount - window.prevHieuQua[adset.id];
-                  if (!window.localConfigs) window.localConfigs = {};
-                  const local = window.localConfigs[adset.id] || {};
+                // Dùng hàm dùng chung (nguồn: localStorage["fb_local_configs"])
+                const raiseRes = window.raiseThresholdForAdset(
+                  adset.id,
+                  effectiveCount,
+                  {
+                    maxSpend: globalMaxSpend,
+                    maxPrice: globalMaxPrice,
+                    maxCpm: globalMaxCpm,
+                  },
+                );
 
-                  const currentMaxSpend =
-                    parseFloat(local.maxSpend) || globalMaxSpend;
-                  const currentMaxCpr =
-                    parseFloat(local.maxPrice) || globalMaxPrice;
-
-                  // Xác định ngưỡng giá sử dụng để nâng MaxSpend
-                  // Dùng chung 1 giá trị (maxPrice) cho cả CPR/CPL/CPC
-                  const raisePriceUnit = currentMaxCpr;
-
-                  // Tính MaxSpend mới = Ngưỡng cũ + (Ngưỡng giá * số KQ tăng thêm)
-                  const newMaxSpend = currentMaxSpend + raisePriceUnit * diff;
-
-                  // Cập nhật vào bộ nhớ localConfigs
-                  window.localConfigs[adset.id] = {
-                    ...local,
-                    maxSpend: newMaxSpend,
-                    maxPrice: currentMaxCpr,
-                    maxCpm: local.maxCpm || globalMaxCpm,
-                    originalMaxSpend: local.originalMaxSpend || globalMaxSpend,
-                    originalMaxPrice: local.originalMaxPrice || globalMaxPrice,
-                    originalMaxCpm: local.originalMaxCpm || globalMaxCpm,
-                  };
-
-                  // Lưu vào localStorage để không bị mất khi F5
-                  localStorage.setItem(
-                    "fb_local_configs",
-                    JSON.stringify(window.localConfigs),
-                  );
+                if (raiseRes.raised) {
+                  const newMaxSpend = raiseRes.newMaxSpend;
+                  const diff = raiseRes.diff;
+                  const prevCount = effectiveCount - diff;
 
                   // Cập nhật ô input trên giao diện nếu đang hiển thị
                   const localSpendInputs = document.querySelectorAll(
@@ -1469,18 +1535,23 @@ document.addEventListener("DOMContentLoaded", async () => {
                     }
                   });
 
+                  // Đồng bộ bảng "Tắt Camp Tự Động" (dùng chung localConfigs)
+                  if (typeof window.careCampRefreshThresholds === "function") {
+                    window.careCampRefreshThresholds();
+                  }
+
                   const modeText = useCpc
                     ? "CPC (Click Link)"
                     : inboxCount !== null && useCpl
                       ? "CPL (Inbox)"
                       : "CPR (Quảng cáo)";
                   console.log(
-                    `🚀 [TỰ ĐỘNG ${modeText}] Nhóm ${adset.name} tăng (${window.prevHieuQua[adset.id]} -> ${effectiveCount}). Nâng ngưỡng: ${newMaxSpend}đ`,
+                    `🚀 [TỰ ĐỘNG ${modeText}] Nhóm ${adset.name} tăng (${prevCount} -> ${effectiveCount}). Nâng ngưỡng: ${newMaxSpend}đ`,
                   );
 
                   // Gửi thông báo về Telegram để sếp biết
                   sendTelegramAlert(
-                    `🚀 <b>NÂNG NGƯỠNG TỰ ĐỘNG (${modeText})</b> 🚀\n- Nhóm: ${adset.name}\n- Click/Hội thoại / KQ mới: ${effectiveCount} (+${diff})\n- Ngưỡng tiêu cũ: ${currentMaxSpend.toLocaleString("vi-VN")}đ\n- Ngưỡng tiêu MỚI: <b>${newMaxSpend.toLocaleString("vi-VN")}đ</b>`,
+                    `🚀 <b>NÂNG NGƯỠNG TỰ ĐỘNG (${modeText})</b> 🚀\n- Nhóm: ${adset.name}\n- Click/Hội thoại / KQ mới: ${effectiveCount} (+${diff})\n- Ngưỡng tiêu cũ: ${raiseRes.currentMaxSpend.toLocaleString("vi-VN")}đ\n- Ngưỡng tiêu MỚI: <b>${newMaxSpend.toLocaleString("vi-VN")}đ</b>`,
                   );
                 }
 
@@ -1927,6 +1998,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     apUseCplEl.addEventListener("change", () => {
       localStorage.setItem("fb_ap_use_cpl", apUseCplEl.checked);
       window.autoPauseConfig.useCpl = apUseCplEl.checked;
+      // Đồng bộ cờ chế độ CPL sang bảng "Tắt Camp Tự Động"
+      const ccCpl = document.getElementById("ccUseCpl");
+      if (ccCpl && ccCpl.checked !== apUseCplEl.checked) {
+        ccCpl.checked = apUseCplEl.checked;
+        ccCpl.dispatchEvent(new Event("change", { bubbles: true }));
+      }
       console.log(
         `📣 [Auto-Pause] Chế độ CPL: ${apUseCplEl.checked ? "BẬT" : "TẮT"}`,
       );
@@ -1944,6 +2021,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     apUseCpcEl.addEventListener("change", () => {
       localStorage.setItem("fb_ap_use_cpc", apUseCpcEl.checked);
       window.autoPauseConfig.useCpc = apUseCpcEl.checked;
+      // Đồng bộ cờ chế độ CPC sang bảng "Tắt Camp Tự Động"
+      const ccCpc = document.getElementById("ccUseCpc");
+      if (ccCpc && ccCpc.checked !== apUseCpcEl.checked) {
+        ccCpc.checked = apUseCpcEl.checked;
+        ccCpc.dispatchEvent(new Event("change", { bubbles: true }));
+      }
       // CPC và CPR độc lập, có thể dùng đồng thời
       console.log(
         `🖱️ [Auto-Pause] Chế độ CPC: ${apUseCpcEl.checked ? "BẬT" : "TẮT"}`,
@@ -1969,6 +2052,18 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (savedVal) el.value = savedVal;
       el.addEventListener("input", () => {
         localStorage.setItem(`fb_${inpId}`, el.value);
+        // Đồng bộ ngưỡng chung sang bảng "Tắt Camp Tự Động"
+        const ccMap = {
+          apMaxSpend: "ccMaxSpend",
+          apMaxPrice: "ccMaxPrice",
+          apMaxCpm: "ccMaxCpm",
+        };
+        const ccEl = document.getElementById(ccMap[inpId]);
+        if (ccEl && ccEl.value !== el.value) ccEl.value = el.value;
+        ccEl?.dispatchEvent(new Event("change", { bubbles: true }));
+        if (typeof window.careCampRefreshThresholds === "function") {
+          window.careCampRefreshThresholds();
+        }
       });
     }
   });

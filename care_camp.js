@@ -14,6 +14,16 @@
   const GRAPH = "https://graph.facebook.com/v20.0";
   const STORAGE_KEY = "cc_camp_state";
   const SCAN_INTERVAL_MS = 60 * 1000;
+  const CONFIGS_KEY = "fb_local_configs";
+  // Chỉ giữ log trong 30 tiếng gần nhất (theo thời gian thực tế)
+  const LOG_WINDOW_MS = 30 * 60 * 60 * 1000;
+  // Trần cứng: tối đa 100 log (~25 KB storage) — tránh ghi đè toàn bộ state
+  // mỗi 60s khi log dày bất thường, và tránh render quá nhiều dòng <tr>
+  const MAX_LOGS = 100;
+  // Trần cứng cho danh sách nhóm đã tắt tự động (~37 KB storage)
+  const MAX_AUTO_PAUSED = 100;
+  // Ghi state theo lô (debounce) — ghi storage mỗi 3 phút thay vì mỗi 60s
+  const SAVE_DEBOUNCE_MS = 3 * 60 * 1000;
 
   /* ------------------------------- Tiện ích ------------------------------ */
   const $ = (id) => document.getElementById(id);
@@ -68,6 +78,117 @@
       .map((s) => "act_" + s);
   }
 
+  /* ------------------ Cấu hình dùng chung (nguồn duy nhất) ------------------
+   * Nguồn sự thật duy nhất cho ngưỡng tiền / giá / CPM của từng nhóm QC:
+   *   window.localConfigs  (được dashboard.js nạp từ localStorage["fb_local_configs"])
+   *   ↕ đồng bộ 2 chiều
+   *   localStorage["fb_local_configs"]
+   *
+   * Dùng chung cho: Bảng Chỉ Số · Bảng Auto-Pause · Bảng Tắt Camp Tự Động.
+   * state.monitored[].limits chỉ còn là bản sao lưu trữ, KHÔNG phải nguồn đọc.
+   * ---------------------------------------------------------------------- */
+
+  /** Lấy object cấu hình dùng chung (luôn trả về cùng 1 object reference) */
+  function sharedConfigs() {
+    if (!window.localConfigs || typeof window.localConfigs !== "object") {
+      try {
+        window.localConfigs = JSON.parse(
+          localStorage.getItem(CONFIGS_KEY) || "{}",
+        );
+      } catch (e) {
+        window.localConfigs = {};
+      }
+      if (!window.localConfigs || typeof window.localConfigs !== "object") {
+        window.localConfigs = {};
+      }
+    }
+    return window.localConfigs;
+  }
+
+  function readConfigs() {
+    return sharedConfigs();
+  }
+
+  /**
+   * Ghi cấu hình — MUTATE đúng object đang dùng chung (không thay thế reference)
+   * rồi lưu xuống localStorage để không mất khi F5.
+   */
+  function writeConfigs(cfg) {
+    const shared = sharedConfigs();
+    // Merge (không xoá key) — luôn giữ đủ cấu hình của mọi nhóm
+    for (const k of Object.keys(cfg || {})) {
+      shared[k] = cfg[k];
+    }
+    try {
+      localStorage.setItem(CONFIGS_KEY, JSON.stringify(shared));
+    } catch (e) {
+      console.warn("Không lưu được cấu hình ngưỡng:", e);
+    }
+  }
+
+  /** Ghi ngưỡng riêng của 1 nhóm vào localConfigs (đồng bộ với bảng Chỉ Số) */
+  function saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm) {
+    const cfg = readConfigs();
+    const id = String(adsetId);
+    const old = cfg[id] || {};
+    cfg[id] = {
+      ...old,
+      maxSpend,
+      maxPrice,
+      maxCpm,
+      originalMaxSpend: old.originalMaxSpend || maxSpend,
+      originalMaxPrice: old.originalMaxPrice || maxPrice,
+      originalMaxCpm: old.originalMaxCpm || maxCpm,
+    };
+    writeConfigs(cfg);
+    return cfg[id];
+  }
+
+  /** Đồng bộ ngưỡng CHUNG giữa bảng Tắt Camp (ccMax*) và bảng Auto-Pause (apMax*) */
+  function syncGlobalThreshold(which, value) {
+    const map = {
+      maxSpend: { cc: "ccMaxSpend", ap: "apMaxSpend", key: "fb_apMaxSpend" },
+      maxPrice: { cc: "ccMaxPrice", ap: "apMaxPrice", key: "fb_apMaxPrice" },
+      maxCpm: { cc: "ccMaxCpm", ap: "apMaxCpm", key: "fb_apMaxCpm" },
+    };
+    const m = map[which];
+    if (!m) return;
+    // Ghi sang ô của bảng Auto-Pause
+    const apEl = $(m.ap);
+    if (apEl && apEl.value !== String(value)) apEl.value = value;
+    try {
+      localStorage.setItem(m.key, String(value));
+    } catch (e) {
+      /* bỏ qua */
+    }
+  }
+
+  /** Đọc ngưỡng CHUNG từ bảng Auto-Pause (ưu tiên) để 2 bảng không lệch nhau */
+  function readGlobalThreshold(which, fallback) {
+    const map = {
+      maxSpend: { cc: "ccMaxSpend", ap: "apMaxSpend", key: "fb_apMaxSpend" },
+      maxPrice: { cc: "ccMaxPrice", ap: "apMaxPrice", key: "fb_apMaxPrice" },
+      maxCpm: { cc: "ccMaxCpm", ap: "apMaxCpm", key: "fb_apMaxCpm" },
+    };
+    const m = map[which];
+    if (!m) return fallback;
+    const apEl = $(m.ap);
+    if (apEl && apEl.value !== "") {
+      const v = parseFloat(apEl.value);
+      if (Number.isFinite(v)) return v;
+    }
+    try {
+      const saved = localStorage.getItem(m.key);
+      if (saved !== null) {
+        const v = parseFloat(saved);
+        if (Number.isFinite(v)) return v;
+      }
+    } catch (e) {
+      /* bỏ qua */
+    }
+    return fallback;
+  }
+
   /* ------------------------------- Trạng thái ----------------------------- */
   const state = {
     rows: [],
@@ -80,14 +201,51 @@
     timer: null,
   };
 
-  async function saveState() {
+  // Timer cho lô ghi state (debounce)
+  let saveTimer = null;
+
+  /**
+   * Ghi state vào chrome.storage.local.
+   *
+   * Mặc định dùng DEBOUNCE (gộp lô): nhiều lần gọi trong 3 phút chỉ ghi 1 lần
+   * → giảm I/O storage xuống ~1/3 (quét 60s nhưng chỉ ghi mỗi 3 phút).
+   * Truyền immediate = true cho các thay đổi quan trọng (bật/dừng giám sát,
+   * đổi ngưỡng) để ghi ngay, tránh mất dữ liệu khi đóng tab.
+   */
+  async function saveState(immediate = false) {
+    if (!immediate) {
+      scheduleSave();
+      return;
+    }
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    await writeState();
+  }
+
+  /** Hẹn giờ ghi state sau SAVE_DEBOUNCE_MS */
+  function scheduleSave() {
+    if (saveTimer) return; // đã có lô đang chờ
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      writeState();
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  /** Ghi state ngay lập tức (bỏ qua lô đang chờ) */
+  async function flushSave() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    await writeState();
+  }
+
+  async function writeState() {
     await new Promise((r) =>
       chrome.storage.local.set(
         {
           [STORAGE_KEY]: {
             monitored: state.monitored,
-            autoPaused: state.autoPaused,
-            logs: state.logs.slice(-300),
+            autoPaused: state.autoPaused.slice(0, MAX_AUTO_PAUSED),
+            logs: pruneLogs(state.logs),
             running: state.running,
             autoScan: state.autoScan,
             settings: state.settings,
@@ -105,14 +263,29 @@
     const s = (d && d[STORAGE_KEY]) || null;
     if (!s) return;
     state.monitored = Array.isArray(s.monitored) ? s.monitored : [];
-    state.autoPaused = Array.isArray(s.autoPaused) ? s.autoPaused : [];
-    state.logs = Array.isArray(s.logs) ? s.logs : [];
+    state.autoPaused = (Array.isArray(s.autoPaused) ? s.autoPaused : []).slice(
+      0,
+      MAX_AUTO_PAUSED,
+    );
+    state.logs = pruneLogs(Array.isArray(s.logs) ? s.logs : []);
     state.running = !!s.running;
     state.autoScan = s.autoScan !== false;
     state.settings = Object.assign(
       { maxSpend: 10000, maxPrice: 12000, maxCpm: 50000, useCpl: false, useCpc: false },
       s.settings || {},
     );
+  }
+
+  /** Chỉ giữ lại log trong 30 tiếng gần nhất (và tối đa MAX_LOGS bản ghi) */
+  function pruneLogs(list) {
+    const now = Date.now();
+    const cutoff = now - LOG_WINDOW_MS;
+    return (Array.isArray(list) ? list : [])
+      .filter((l) => {
+        const t = Number(l && l.createdAt);
+        return Number.isFinite(t) && t >= cutoff;
+      })
+      .slice(0, MAX_LOGS);
   }
 
   function pushLog(type, adsetName, campaignName, message) {
@@ -123,7 +296,7 @@
       campaignName: campaignName || "",
       message: message || "",
     });
-    if (state.logs.length > 300) state.logs.length = 300;
+    state.logs = pruneLogs(state.logs);
   }
 
   /**
@@ -183,6 +356,18 @@
   }
 
   function limitsFor(adsetId) {
+    // Nguồn duy nhất: localStorage["fb_local_configs"] (đồng bộ với bảng Chỉ Số)
+    // Fallback: ngưỡng riêng đã lưu trong state.monitored (dữ liệu cũ) → ngưỡng chung
+    const cfg = readConfigs();
+    const local = cfg[String(adsetId)];
+    if (local) {
+      const g = state.settings;
+      return {
+        maxSpend: num(local.maxSpend, g.maxSpend),
+        maxPrice: num(local.maxPrice ?? local.maxCpr, g.maxPrice),
+        maxCpm: num(local.maxCpm, g.maxCpm),
+      };
+    }
     const m = state.monitored.find(
       (x) => String(x.adsetId) === String(adsetId),
     );
@@ -489,7 +674,12 @@
       const price = live ? live.price : 0;
       const cpm = live ? live.cpm : 0;
       const bad = live ? isBreached(live) : false;
-      const lim = m.limits || {};
+      // Đọc ngưỡng từ nguồn chung (localConfigs), fallback về bản sao trong state
+      const lim = limitsFor(m.adsetId);
+      const saved = m.limits || {};
+      const limMaxSpend = lim.maxSpend || saved.maxSpend || 0;
+      const limMaxPrice = lim.maxPrice || saved.maxPrice || 0;
+      const limMaxCpm = lim.maxCpm || saved.maxCpm || 0;
       return `<tr>
         <td style="font-size:11px;color:#65676b">${esc(m.accountName || "-")}</td>
         <td style="color:#1877f2;font-size:12px;font-weight:bold">${esc(m.campaignName || "-")}</td>
@@ -505,7 +695,7 @@
               ? '<span style="background:#fdecea;color:#fa383e;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #fa383e">⚠️ VƯỢT NGƯỠNG</span>'
               : '<span style="background:#e7f6ec;color:#1a7f37;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #31a24c">✅ An toàn</span>'
           }
-          <div style="font-size:10px;color:#8c939d;margin-top:2px">${money(lim.maxSpend)} | ${money(lim.maxPrice)} | ${money(lim.maxCpm)}</div>
+          <div style="font-size:10px;color:#8c939d;margin-top:2px">${money(limMaxSpend)} | ${money(limMaxPrice)} | ${money(limMaxCpm)}</div>
         </td>
         <td>
           <button class="cc-btn-remove" data-id="${esc(m.adsetId)}" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#fa383e;color:#fff;border:none;border-radius:4px">Bỏ giám sát</button>
@@ -574,6 +764,7 @@
       info: ["#1877f2", "THÔNG TIN"],
     };
     tb.innerHTML = state.logs
+      .slice(0, MAX_LOGS)
       .map((l) => {
         const m = typeMap[l.type] || ["#65676b", l.type];
         return `<tr>
@@ -596,6 +787,16 @@
     renderLogs();
     renderRunningState();
   }
+
+  // Cầu nối: gọi từ dashboard.js khi ngưỡng trong localConfigs thay đổi
+  // để cột "NGƯỠNG RIÊNG" của bảng Tắt Camp cập nhật ngay.
+  window.careCampRefreshThresholds = function () {
+    try {
+      renderAll();
+    } catch (e) {
+      console.warn("careCampRefreshThresholds:", e);
+    }
+  };
 
   function renderRunningState() {
     const btnStart = $("ccBtnStart");
@@ -641,7 +842,7 @@
           "ok",
         );
       }
-      await saveState();
+      await saveState(true);
     } catch (e) {
       toast("❌ " + (e?.message || e), "err");
     } finally {
@@ -664,11 +865,19 @@
         `#ccTableBody input.cc-check[value="${CSS.escape(adsetId)}"]`,
       );
       const tr = rowEl ? rowEl.closest("tr") : null;
+      // Ưu tiên giá trị đang hiển thị trong ô input (render từ nguồn chung),
+      // nhưng KHÔNG ghi đè config đã bị nâng tự động nếu người dùng không sửa.
+      const inpSpend = tr?.querySelector(".cc-lim-spend")?.value;
+      const inpPrice = tr?.querySelector(".cc-lim-price")?.value;
+      const inpCpm = tr?.querySelector(".cc-lim-cpm")?.value;
+      const existing = readConfigs()[String(adsetId)] || {};
       const lim = {
-        maxSpend: num(tr?.querySelector(".cc-lim-spend")?.value, s.maxSpend),
-        maxPrice: num(tr?.querySelector(".cc-lim-price")?.value, s.maxPrice),
-        maxCpm: num(tr?.querySelector(".cc-lim-cpm")?.value, s.maxCpm),
+        maxSpend: num(inpSpend, num(existing.maxSpend, s.maxSpend)),
+        maxPrice: num(inpPrice, num(existing.maxPrice, s.maxPrice)),
+        maxCpm: num(inpCpm, num(existing.maxCpm, s.maxCpm)),
       };
+      // Ghi ngưỡng vào nguồn cấu hình chung để bảng Chỉ Số thấy giống
+      saveConfigFor(adsetId, lim.maxSpend, lim.maxPrice, lim.maxCpm);
       return {
         adsetId: String(adsetId),
         accountId: row?.accountId || "",
@@ -682,7 +891,7 @@
 
     state.monitored = list;
     state.running = true;
-    await saveState();
+    await saveState(true);
     renderAll();
     startTimer();
     toast(`🚀 Đang giám sát ${list.length} nhóm.`, "ok");
@@ -692,10 +901,51 @@
   async function doStopMonitoring() {
     state.running = false;
     state.monitored = [];
-    await saveState();
+    await saveState(true);
     stopTimer();
     renderAll();
     toast("🛑 Đã dừng giám sát và xoá danh sách nhóm theo dõi.", "ok");
+  }
+
+  /**
+   * Nâng ngưỡng MAXSPEND tự động — dùng chung nguồn cấu hình
+   * localStorage["fb_local_configs"] với bảng Chỉ Số / Auto-Pause.
+   *
+   * Công thức (giống dashboard.js):
+   *   maxSpend mới = maxSpend cũ + maxPrice × (số KQ tăng thêm)
+   *
+   * Số KQ dùng để so sánh là "effective count" đã tính sẵn trong fetchAdsets:
+   *   - Bật CPC → click link
+   *   - Bật CPL → hội thoại inbox
+   *   - Mặc định → kết quả QC (actions)
+   *
+   * Dùng chung window.raiseThresholdForAdset() + window.prevHieuQua của
+   * dashboard.js → mỗi lần KQ tăng chỉ nâng ngưỡng ĐÚNG 1 LẦN, không nhân đôi
+   * khi cả bảng Chỉ Số và bảng Tắt Camp cùng quét.
+   */
+  function raiseThresholds(rows) {
+    if (typeof window.raiseThresholdForAdset !== "function") return false;
+    let changed = false;
+
+    for (const row of rows.filter((r) => !r.error)) {
+      const g = state.settings;
+      const res = window.raiseThresholdForAdset(row.adsetId, row.resultCount || 0, {
+        maxSpend: g.maxSpend,
+        maxPrice: g.maxPrice,
+        maxCpm: g.maxCpm,
+      });
+      if (res?.raised) {
+        changed = true;
+        console.log(
+          `🚀 [CARE CAMP] Nâng ngưỡng nhóm ${row.name}: ${res.currentMaxSpend}đ -> ${res.newMaxSpend}đ (+${res.diff} KQ)`,
+        );
+      }
+    }
+
+    if (changed && typeof window.careCampRefreshThresholds === "function") {
+      window.careCampRefreshThresholds();
+    }
+    return changed;
   }
 
   /** Quét & tự động tắt/bật lại nhóm vượt ngưỡng */
@@ -717,6 +967,11 @@
       state.rows = rows;
       let paused = 0;
       let resumed = 0;
+
+      // 0. NÂNG NGƯỠNG TỰ ĐỘNG (dùng chung localConfigs với bảng Chỉ Số)
+      //    Khi số kết quả (hội thoại inbox / click / CPR) tăng so với lần quét
+      //    trước → maxSpend += maxPrice * (số KQ tăng thêm).
+      raiseThresholds(rows);
 
       // 1. Tắt nhóm đang giám sát vượt ngưỡng
       //    Bỏ qua nhóm thuộc chiến dịch đã tắt (không thể tắt con của chiến dịch tắt)
@@ -750,7 +1005,7 @@
             reason,
             pausedAt: Date.now(),
           });
-          state.autoPaused = state.autoPaused.slice(0, 200);
+          state.autoPaused = state.autoPaused.slice(0, MAX_AUTO_PAUSED);
           state.monitored = state.monitored.filter(
             (x) => String(x.adsetId) !== String(row.adsetId),
           );
@@ -861,7 +1116,7 @@
           p?.campaignName || "",
           "Bật lại thủ công từ danh sách nhóm đã tắt tự động",
         );
-        await saveState();
+        await saveState(true);
         renderAll();
         toast(
           `✅ Đã bật lại nhóm "${p?.name || adsetId}". Nhóm sẽ hiện lại ở bảng nhóm đang bật.`,
@@ -888,6 +1143,11 @@
     const maxSpend = num(tr.querySelector(".cc-lim-spend")?.value, 0);
     const maxPrice = num(tr.querySelector(".cc-lim-price")?.value, 0);
     const maxCpm = num(tr.querySelector(".cc-lim-cpm")?.value, 0);
+
+    // 1. Ghi vào nguồn cấu hình chung (localStorage["fb_local_configs"])
+    saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm);
+
+    // 2. Đồng bộ bản sao trong state.monitored (để tương thích dữ liệu cũ)
     let m = state.monitored.find((x) => String(x.adsetId) === String(adsetId));
     if (!m) {
       const row = state.rows.find((r) => String(r.adsetId) === String(adsetId));
@@ -903,7 +1163,7 @@
     } else {
       m.limits = { maxSpend, maxPrice, maxCpm };
     }
-    saveState();
+    saveState(true);
     btn.innerText = "✅ Đã lưu";
     setTimeout(() => (btn.innerText = "Lưu"), 1500);
     renderAll();
@@ -923,7 +1183,7 @@
       p.campaignName,
       "Đã xoá khỏi danh sách nhóm tắt tự động (nhóm vẫn đang tắt trên Facebook)",
     );
-    await saveState();
+    await saveState(true);
     renderAll();
     toast(`🗑️ Đã xoá "${p.name || adsetId}" khỏi danh sách tắt tự động.`, "ok");
   }
@@ -943,7 +1203,7 @@
     if (!ok) return;
     state.autoPaused = [];
     pushLog("info", "-", "", `Đã xoá toàn bộ ${n} nhóm khỏi danh sách tắt tự động`);
-    await saveState();
+    await saveState(true);
     renderAll();
     toast(`🗑️ Đã xoá ${n} nhóm khỏi danh sách tắt tự động.`, "ok");
   }
@@ -965,7 +1225,7 @@
     state.running = false;
     stopTimer();
     pushLog("info", "-", "", `Đã xoá toàn bộ ${n} nhóm đang theo dõi và dừng giám sát`);
-    await saveState();
+    await saveState(true);
     renderAll();
     toast(`🗑️ Đã xoá ${n} nhóm đang theo dõi và dừng giám sát.`, "ok");
   }
@@ -987,10 +1247,29 @@
   async function init() {
     await loadState();
 
-    // Khôi phục ngưỡng chung
-    $("ccMaxSpend").value = state.settings.maxSpend;
-    $("ccMaxPrice").value = state.settings.maxPrice;
-    $("ccMaxCpm").value = state.settings.maxCpm;
+    // Khôi phục ngưỡng chung — ưu tiên giá trị đang có ở bảng Auto-Pause (apMax*)
+    // để 2 bảng luôn dùng chung 1 bộ ngưỡng chung.
+    $("ccMaxSpend").value = readGlobalThreshold(
+      "maxSpend",
+      state.settings.maxSpend,
+    );
+    $("ccMaxPrice").value = readGlobalThreshold(
+      "maxPrice",
+      state.settings.maxPrice,
+    );
+    $("ccMaxCpm").value = readGlobalThreshold("maxCpm", state.settings.maxCpm);
+    state.settings.maxSpend = num($("ccMaxSpend").value, 10000);
+    state.settings.maxPrice = num($("ccMaxPrice").value, 12000);
+    state.settings.maxCpm = num($("ccMaxCpm").value, 50000);
+    // Cờ chế độ CPL/CPC: ưu tiên giá trị đã lưu ở bảng Auto-Pause
+    const apCplEl = $("apUseCpl");
+    const apCpcEl = $("apUseCpc");
+    state.settings.useCpl = apCplEl
+      ? apCplEl.checked
+      : !!state.settings.useCpl;
+    state.settings.useCpc = apCpcEl
+      ? apCpcEl.checked
+      : !!state.settings.useCpc;
     $("ccUseCpl").checked = state.settings.useCpl;
     $("ccUseCpc").checked = state.settings.useCpc;
     $("ccAutoScan").checked = state.autoScan;
@@ -1006,14 +1285,18 @@
         .forEach((cb) => (cb.checked = e.target.checked));
     });
 
-    // Lưu ngưỡng chung khi thay đổi
+    // Lưu ngưỡng chung khi thay đổi (đồng bộ 2 chiều với bảng Auto-Pause)
     const persistSettings = async () => {
       state.settings.maxSpend = num($("ccMaxSpend").value, 10000);
       state.settings.maxPrice = num($("ccMaxPrice").value, 12000);
       state.settings.maxCpm = num($("ccMaxCpm").value, 50000);
       state.settings.useCpl = !!$("ccUseCpl").checked;
       state.settings.useCpc = !!$("ccUseCpc").checked;
-      await saveState();
+      // Đồng bộ sang bảng Auto-Pause
+      syncGlobalThreshold("maxSpend", state.settings.maxSpend);
+      syncGlobalThreshold("maxPrice", state.settings.maxPrice);
+      syncGlobalThreshold("maxCpm", state.settings.maxCpm);
+      await saveState(true);
       renderAll();
     };
     ["ccMaxSpend", "ccMaxPrice", "ccMaxCpm"].forEach((id) =>
@@ -1023,8 +1306,25 @@
     $("ccUseCpc")?.addEventListener("change", persistSettings);
     $("ccAutoScan")?.addEventListener("change", async (e) => {
       state.autoScan = e.target.checked;
-      await saveState();
+      await saveState(true);
     });
+
+    // Đồng bộ cờ chế độ CPL/CPC sang bảng Auto-Pause (2 chiều)
+    const syncModeFlags = () => {
+      const apCpl = document.getElementById("apUseCpl");
+      const apCpc = document.getElementById("apUseCpc");
+      if (apCpl && apCpl.checked !== !!$("ccUseCpl")?.checked) {
+        apCpl.checked = !!$("ccUseCpl")?.checked;
+        apCpl.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (apCpc && apCpc.checked !== !!$("ccUseCpc")?.checked) {
+        apCpc.checked = !!$("ccUseCpc")?.checked;
+        apCpc.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    };
+    $("ccUseCpl")?.addEventListener("change", syncModeFlags);
+    $("ccUseCpc")?.addEventListener("change", syncModeFlags);
+    syncModeFlags();
 
     // Nút trong bảng (dùng event delegation)
     document.addEventListener("click", (e) => {
@@ -1036,7 +1336,7 @@
         state.monitored = state.monitored.filter(
           (x) => String(x.adsetId) !== String(id),
         );
-        saveState();
+        saveState(true);
         renderAll();
       } else if (t.classList?.contains("cc-btn-resume")) {
         doResumeAdset(t.getAttribute("data-id"));
@@ -1068,6 +1368,15 @@
 
     renderAll();
     if (state.running) startTimer();
+
+    // Ghi nốt lô đang chờ khi người dùng đóng tab / chuyển tab
+    // (debounce 3 phút có thể chưa tới hạn → ghi ngay để không mất dữ liệu)
+    window.addEventListener("beforeunload", () => {
+      flushSave();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushSave();
+    });
   }
 
   if (document.readyState === "loading") {

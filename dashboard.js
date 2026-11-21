@@ -1082,31 +1082,178 @@ document.addEventListener("DOMContentLoaded", async () => {
         fetchAllActBtn.innerText = "⏳ ĐANG KÉO DỮ LIỆU...";
         try {
           const res = await fetch(
-            `https://graph.facebook.com/v20.0/me/adaccounts?fields=account_id&limit=500&access_token=${token}`,
+            `https://graph.facebook.com/v20.0/me/adaccounts?fields=account_id,name,account_status,currency,time_zone&limit=500&access_token=${token}`,
           );
           const data = await res.json();
 
           if (data.data && data.data.length > 0) {
-            const allIds = data.data
-              .map((acc) => `act_${acc.account_id}`)
-              .join(",\n");
-            document.getElementById("idInput").value = allIds;
-            fetchAllActBtn.innerText = `✅ ĐÃ TÌM THẤY ${data.data.length} TKQC`;
+            openSelectActModal(data.data);
           } else {
             alert("❌ Không tìm thấy TKQC nào hoặc Token bị lỗi.");
-            fetchAllActBtn.innerText = "⏬ KÉO TẤT CẢ TKQC CỦA VIA VÀO Ô TRÊN";
+            fetchAllActBtn.innerText = "⏬ CHỌN TKQC CỦA VIA";
           }
         } catch (e) {
           alert("❌ Lỗi mạng khi kéo TKQC!");
-          fetchAllActBtn.innerText = "⏬ KÉO TẤT CẢ TKQC CỦA VIA VÀO Ô TRÊN";
+          fetchAllActBtn.innerText = "⏬ CHỌN TKQC CỦA VIA";
         }
         setTimeout(
           () =>
             (fetchAllActBtn.innerText =
-              "⏬ KÉO TẤT CẢ TKQC CỦA VIA VÀO Ô TRÊN"),
+              "⏬ CHỌN TKQC CỦA VIA"),
           3000,
         );
       });
+    }
+
+    // ===== MODAL CHỌN TÀI KHOẢN QUẢNG CÁO =====
+    const selectActModal = document.getElementById("selectActModal");
+    const actListContainer = document.getElementById("actListContainer");
+    const actSearchInput = document.getElementById("actSearchInput");
+    const actConfirmBtn = document.getElementById("actConfirmBtn");
+    let allActList = []; // danh sách TKQC đầy đủ
+    let filteredActList = []; // danh sách sau khi lọc tìm kiếm
+    let actCurrentFilter = "all"; // all | active | inactive
+
+    const getActCheckedIds = () =>
+      Array.from(
+        actListContainer.querySelectorAll("input.actCheckBox:checked"),
+      ).map((cb) => cb.value);
+
+    const updateActConfirmBtn = () => {
+      const n = getActCheckedIds().length;
+      actConfirmBtn.innerText = `➕ ĐƯA VÀO Ô ID (${n})`;
+      actConfirmBtn.disabled = n === 0;
+      actConfirmBtn.style.opacity = n === 0 ? "0.5" : "1";
+    };
+
+    const renderActList = () => {
+      const kw = (actSearchInput.value || "").trim().toLowerCase();
+      filteredActList = allActList.filter((acc) => {
+        if (actCurrentFilter === "active" && acc.account_status != 1) return false;
+        if (actCurrentFilter === "inactive" && acc.account_status == 1) return false;
+        if (!kw) return true;
+        return (
+          String(acc.name || "").toLowerCase().includes(kw) ||
+          String(acc.account_id || "").toLowerCase().includes(kw)
+        );
+      });
+
+      const checkedSet = new Set(getActCheckedIds());
+      if (!filteredActList.length) {
+        actListContainer.innerHTML =
+          '<div style="padding:20px;text-align:center;color:#8c939d;font-size:13px">Không có TKQC phù hợp</div>';
+        updateActConfirmBtn();
+        return;
+      }
+
+      actListContainer.innerHTML = filteredActList
+        .map((acc, i) => {
+          const isActive = acc.account_status == 1;
+          const checked = checkedSet.has(String(acc.account_id));
+          return `
+          <label style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;cursor:pointer;font-size:13px;color:#1c1e21;${checked ? "background:#e7f3ff;" : ""}">
+            <input type="checkbox" class="actCheckBox" value="${acc.account_id}" ${checked ? "checked" : ""} style="width:16px;height:16px;cursor:pointer;flex-shrink:0" />
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${String(acc.name || "").replace(/"/g, "&quot;")}">${acc.name || "(Không tên)"}</span>
+            <span style="font-size:11px;color:#8c939d;font-family:monospace">${acc.account_id}</span>
+            <span style="font-size:11px;padding:2px 7px;border-radius:10px;${isActive ? "background:#d4f4dd;color:#0a5c2f" : "background:#ffe0e0;color:#a4262c"}">${isActive ? "ACTIVE" : "INACTIVE"}</span>
+          </label>`;
+        })
+        .join("");
+
+      actListContainer.querySelectorAll("input.actCheckBox").forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const label = cb.closest("label");
+          if (label) label.style.background = cb.checked ? "#e7f3ff;" : "";
+          updateActConfirmBtn();
+        });
+      });
+      updateActConfirmBtn();
+    };
+
+    const openSelectActModal = (list) => {
+      allActList = list;
+      actCurrentFilter = "all";
+      if (actSearchInput) actSearchInput.value = "";
+      // Mặc định tick sẵn những TKQC đang có trong ô ID
+      const currentIds = new Set(
+        (document.getElementById("idInput").value || "")
+          .split(/[\s,]+/)
+          .filter(Boolean)
+          .map((s) => s.replace(/^act_/, "")),
+      );
+      renderActList();
+      actListContainer.querySelectorAll("input.actCheckBox").forEach((cb) => {
+        if (currentIds.has(cb.value)) cb.checked = true;
+      });
+      renderActList();
+      updateActConfirmBtn();
+      selectActModal.style.display = "flex";
+    };
+
+    actSearchInput?.addEventListener("input", renderActList);
+
+    document.getElementById("actSelectAllBtn")?.addEventListener("click", () => {
+      actListContainer
+        .querySelectorAll("input.actCheckBox")
+        .forEach((cb) => (cb.checked = true));
+      renderActList();
+    });
+
+    document.getElementById("actSelectNoneBtn")?.addEventListener("click", () => {
+      actListContainer
+        .querySelectorAll("input.actCheckBox")
+        .forEach((cb) => (cb.checked = false));
+      renderActList();
+    });
+
+    actConfirmBtn?.addEventListener("click", () => {
+      const ids = getActCheckedIds();
+      if (!ids.length) return alert("⚠️ Chưa chọn TKQC nào!");
+      const input = document.getElementById("idInput");
+      // Giữ lại các ID đang có trong ô mà không nằm trong danh sách vừa tải
+      const fetched = new Set(allActList.map((a) => String(a.account_id)));
+      const kept = (input.value || "")
+        .split(/[\s,]+/)
+        .filter(Boolean)
+        .filter((s) => !fetched.has(s.replace(/^act_/, "")));
+      const merged = [...kept, ...ids.map((id) => `act_${id}`)];
+      input.value = merged.join(",\n");
+      selectActModal.style.display = "none";
+      // Lưu luôn vào storage (không cần bấm LƯU CẤU HÌNH)
+      chrome.storage.local.set(
+        {
+          fbToken: document.getElementById("tokenInput").value,
+          fbIds: input.value,
+        },
+        () => {},
+      );
+      fetchAllActBtn && (fetchAllActBtn.innerText = `✅ ĐÃ CHỌN & LƯU ${ids.length} TKQC`);
+      setTimeout(() => {
+        if (fetchAllActBtn)
+          fetchAllActBtn.innerText = "⏬ CHỌN TKQC CỦA VIA";
+      }, 3000);
+    });
+
+    // Filter trạng thái
+    const actFilterBox = document.createElement("div");
+    actFilterBox.style.cssText =
+      "display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap";
+    actFilterBox.innerHTML = `
+      <button class="btn actFilterBtn btn-blue" data-filter="all" style="flex:1;margin-bottom:0;font-size:12px;padding:6px">TẤT CẢ</button>
+      <button class="btn actFilterBtn btn-green" data-filter="active" style="flex:1;margin-bottom:0;font-size:12px;padding:6px">🟢 ĐANG CHẠY</button>
+      <button class="btn actFilterBtn btn-orange" data-filter="inactive" style="flex:1;margin-bottom:0;font-size:12px;padding:6px">🔴 ĐÃ TẮT</button>
+    `;
+    actFilterBox.querySelectorAll(".actFilterBtn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        actCurrentFilter = btn.dataset.filter;
+        renderActList();
+      });
+    });
+    if (actListContainer && actListContainer.parentElement) {
+      actListContainer.parentElement.insertBefore(
+        actFilterBox,
+        actListContainer,
+      );
     }
 
     chrome.storage.local.get(["fbToken", "fbIds"], (result) => {

@@ -386,6 +386,40 @@
     return row.spend > lim.maxSpend && priceBreached && row.cpm > lim.maxCpm;
   }
 
+  /**
+   * Thêm (hoặc cập nhật) một nhóm vào bảng GIÁM SÁT (state.monitored).
+   *
+   * Dùng sau khi BẬT LẠI một nhóm (tự động hoặc thủ công) để nhóm đó tiếp tục
+   * được theo dõi: nếu chỉ số lại vượt ngưỡng ở lần quét kế tiếp thì sẽ bị
+   * tắt tự động tiếp (đúng ý "bật lại xong vẫn giám sát, vượt ngưỡng lại tắt").
+   */
+  function addToMonitored(info, lim) {
+    const adsetId = String(info.adsetId);
+    const limits = lim || limitsFor(adsetId);
+    const existing = state.monitored.find(
+      (x) => String(x.adsetId) === adsetId,
+    );
+    if (existing) {
+      existing.name = info.name || existing.name;
+      existing.campaignName = info.campaignName || existing.campaignName;
+      existing.accountId = info.accountId || existing.accountId;
+      existing.accountName = info.accountName || existing.accountName;
+      existing.limits = limits;
+      return existing;
+    }
+    const item = {
+      adsetId,
+      accountId: info.accountId || "",
+      accountName: info.accountName || "",
+      name: info.name || "",
+      campaignName: info.campaignName || "",
+      campaignId: info.campaignId || "",
+      limits,
+    };
+    state.monitored.push(item);
+    return item;
+  }
+
   /* ------------------------------ Gọi Meta API ---------------------------- */
   async function fetchAdsets(token, ids, includePaused = true) {
     // Lấy cả ACTIVE và PAUSED để sau khi tắt còn đọc được chỉ số để quyết định bật lại
@@ -1034,18 +1068,34 @@
         if (!row || row.error) continue; // không còn đọc được -> giữ nguyên trạng thái tắt
         // Chiến dịch cha đã tắt -> không bật lại con (sẽ bật khi bật lại chiến dịch)
         if (!row.isCampaignActive) continue;
-        const lim = {
+
+        // Mốc ngưỡng = ngưỡng CŨ lúc mới tắt (p.maxSpend / p.maxPrice / p.maxCpm)
+        const baseLim = {
           maxSpend: p.maxSpend || state.settings.maxSpend,
           maxPrice: p.maxPrice || state.settings.maxPrice,
           maxCpm: p.maxCpm || state.settings.maxCpm,
         };
         const prevResult = Number(p.result || 0);
-        const newResults = row.resultCount - prevResult;
+        const newResults = Math.max(0, row.resultCount - prevResult);
         const newPrice =
           row.resultCount > 0 ? Math.round(row.spend / row.resultCount) : Infinity;
-        const priceOk = newResults > 0 && newPrice <= lim.maxPrice;
-        const cpmOk = row.cpm <= lim.maxCpm;
-        const spendOk = row.spend <= lim.maxSpend;
+
+        // NÂNG NGƯỠNG TỔNG CHI TIÊU theo số KẾT QUẢ MỚI phát sinh trong lúc bị tắt:
+        //   maxSpend mới = maxSpend lúc tắt + maxPrice × (số KQ mới)
+        // Lấy MAX với ngưỡng đang lưu ở nguồn cấu hình chung (bảng Chỉ Số cũng
+        // tự nâng ngưỡng) để KHÔNG BAO GIỜ làm ngưỡng bị hạ xuống.
+        const sharedMaxSpend = limitsFor(p.adsetId).maxSpend || 0;
+        const newMaxSpend = Math.max(
+          baseLim.maxSpend + baseLim.maxPrice * newResults,
+          sharedMaxSpend,
+        );
+        // Điều kiện bật lại:
+        //   - priceOk: đã có KQ mới và giá mới <= ngưỡng giá
+        //   - cpmOk  : CPM đã tụt xuống dưới ngưỡng CPM
+        //   - spendOk: tổng chi tiêu <= ngưỡng tiêu MỚI (đã nâng theo KQ mới)
+        const priceOk = newResults > 0 && newPrice <= baseLim.maxPrice;
+        const cpmOk = row.cpm <= baseLim.maxCpm;
+        const spendOk = row.spend <= newMaxSpend;
         if (!(priceOk || cpmOk || spendOk)) continue;
 
         const res = await setAdsetStatus(token, p.adsetId, "ACTIVE");
@@ -1054,11 +1104,54 @@
           state.autoPaused = state.autoPaused.filter(
             (x) => String(x.adsetId) !== String(p.adsetId),
           );
+
+          // Ngưỡng MỚI áp dụng cho nhóm sau khi bật lại
+          const lim = {
+            maxSpend: newMaxSpend,
+            maxPrice: baseLim.maxPrice,
+            maxCpm: baseLim.maxCpm,
+          };
+
+          // Ghi ngưỡng mới vào nguồn cấu hình chung (đồng bộ bảng Chỉ Số)
+          saveConfigFor(p.adsetId, lim.maxSpend, lim.maxPrice, lim.maxCpm);
+
+          // BẬT LẠI XONG → thêm lại vào bảng GIÁM SÁT để tiếp tục theo dõi.
+          // Nếu chỉ số lại vượt ngưỡng ở lần quét kế tiếp → sẽ bị tắt tiếp.
+          addToMonitored(
+            {
+              adsetId: p.adsetId,
+              accountId: row.accountId || p.accountId,
+              accountName: row.accountName || p.accountName,
+              name: row.name || p.name,
+              campaignName: row.campaignName || p.campaignName,
+              campaignId: row.campaignId || "",
+            },
+            lim,
+          );
+
+          // Đồng bộ mốc đếm KQ dùng chung (window.prevHieuQua) để lần quét sau
+          // KHÔNG nâng ngưỡng thêm cho các KQ đã tính ở lần này.
+          if (window.prevHieuQua) {
+            window.prevHieuQua[String(p.adsetId)] = row.resultCount;
+          }
+          if (typeof window.careCampRefreshThresholds === "function") {
+            window.careCampRefreshThresholds();
+          }
+
+          // Đồng bộ trạng thái trong bộ nhớ (nhóm đã không còn PAUSED)
+          row.isPaused = false;
+          row.effectiveStatus = "ACTIVE";
+          // Đảm bảo có tiến trình quét để nhóm vừa bật lại được giám sát lại
+          if (!state.running) {
+            state.running = true;
+            startTimer();
+          }
           pushLog(
             "auto_resume",
             p.name,
             p.campaignName,
-            `Đã bật lại — chỉ số đã trở lại trong ngưỡng (giá mới ${money(newPrice)} đ, CPM ${money(Math.floor(row.cpm))} đ)`,
+            `Đã bật lại — chỉ số đã trở lại trong ngưỡng (giá mới ${money(newPrice)} đ, CPM ${money(Math.floor(row.cpm))} đ). ` +
+              `Nâng ngưỡng tiêu ${money(baseLim.maxSpend)} đ → ${money(newMaxSpend)} đ (+${newResults} KQ mới). Đã thêm lại vào bảng giám sát.`,
           );
         }
       }

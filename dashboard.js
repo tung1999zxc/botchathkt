@@ -1145,6 +1145,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     let allActList = []; // danh sách TKQC đầy đủ
     let filteredActList = []; // danh sách sau khi lọc tìm kiếm
     let actCurrentFilter = "all"; // all | active | inactive
+    const MAX_ACT_SELECT = 5; // giới hạn tối đa số TKQC được chọn
 
     const getActCheckedIds = () =>
       Array.from(
@@ -1194,6 +1195,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       actListContainer.querySelectorAll("input.actCheckBox").forEach((cb) => {
         cb.addEventListener("change", () => {
+          if (cb.checked && getActCheckedIds().length > MAX_ACT_SELECT) {
+            cb.checked = false;
+            alert(
+              `⚠️ Chỉ được chọn tối đa ${MAX_ACT_SELECT} tài khoản quảng cáo!`,
+            );
+          }
           const label = cb.closest("label");
           if (label) label.style.background = cb.checked ? "#e7f3ff;" : "";
           updateActConfirmBtn();
@@ -1214,8 +1221,13 @@ document.addEventListener("DOMContentLoaded", async () => {
           .map((s) => s.replace(/^act_/, "")),
       );
       renderActList();
-      actListContainer.querySelectorAll("input.actCheckBox").forEach((cb) => {
-        if (currentIds.has(cb.value)) cb.checked = true;
+      const boxes = actListContainer.querySelectorAll("input.actCheckBox");
+      let picked = 0;
+      boxes.forEach((cb) => {
+        if (currentIds.has(cb.value) && picked < MAX_ACT_SELECT) {
+          cb.checked = true;
+          picked++;
+        }
       });
       renderActList();
       updateActConfirmBtn();
@@ -1225,9 +1237,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     actSearchInput?.addEventListener("input", renderActList);
 
     document.getElementById("actSelectAllBtn")?.addEventListener("click", () => {
-      actListContainer
-        .querySelectorAll("input.actCheckBox")
-        .forEach((cb) => (cb.checked = true));
+      const boxes = Array.from(
+        actListContainer.querySelectorAll("input.actCheckBox"),
+      );
+      boxes.slice(0, MAX_ACT_SELECT).forEach((cb) => (cb.checked = true));
+      boxes.slice(MAX_ACT_SELECT).forEach((cb) => (cb.checked = false));
       renderActList();
     });
 
@@ -1241,6 +1255,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     actConfirmBtn?.addEventListener("click", () => {
       const ids = getActCheckedIds();
       if (!ids.length) return alert("⚠️ Chưa chọn TKQC nào!");
+      if (ids.length > MAX_ACT_SELECT)
+        return alert(`⚠️ Chỉ được chọn tối đa ${MAX_ACT_SELECT} tài khoản quảng cáo!`);
       const input = document.getElementById("idInput");
       // Giữ lại các ID đang có trong ô mà không nằm trong danh sách vừa tải
       const fetched = new Set(allActList.map((a) => String(a.account_id)));

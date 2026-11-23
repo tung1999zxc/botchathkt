@@ -82,17 +82,30 @@
     toast._t = setTimeout(() => (box.style.display = "none"), 6000);
   }
 
+  /* --------------------------- Token & ID dùng chung ----------------------
+   * Mục ✂️ TẮT CAMP TỰ ĐỘNG dùng CHUNG token + danh sách ID tài khoản quảng cáo
+   * với mục "CẤU HÌNH TÀI KHOẢN CARE CAMP" (ô #tokenInput / #idInput).
+   * Ưu tiên: ô riêng của Care Camp (nếu còn) → ô dùng chung → chrome.storage.
+   * ---------------------------------------------------------------------- */
+
   function getToken() {
     const inp = $("ccTokenInput");
     const v = inp && inp.value ? inp.value.trim() : "";
     if (v) return v;
     const main = $("tokenInput");
     if (main && main.value) return main.value.trim();
-    return window.__ccToken || "";
+    if (window.__ccToken) return String(window.__ccToken).trim();
+    return readStoredCreds().fbToken || "";
   }
 
   function getAccountIds() {
-    const raw = ($("ccIdsInput") && $("ccIdsInput").value) || "";
+    // Ô riêng (nếu người dùng vẫn nhập tay ở trang Care Camp) được ưu tiên
+    const own = ($("ccIdsInput") && $("ccIdsInput").value) || "";
+    // Ô dùng chung với CẤU HÌNH TÀI KHOẢN CARE CAMP
+    const shared = ($("idInput") && $("idInput").value) || "";
+    // Lưu trong chrome.storage (do mục cấu hình lưu)
+    const stored = readStoredCreds().fbIds || "";
+    const raw = own.trim() || shared.trim() || stored;
     return raw
       .split(/[\s,;]+/)
       .map((s) => s.trim().replace(/^act_/i, ""))
@@ -100,6 +113,60 @@
       // Meta Graph API BẮT BUỘC tiền tố "act_" khi gọi /{id}/adsets,
       // nếu thiếu sẽ lỗi #100 "Tried accessing nonexisting field (adsets)".
       .map((s) => "act_" + s);
+  }
+
+  /** Cache token/ID đã lưu trong chrome.storage.local (fbToken / fbIds) */
+  let storedCreds = { fbToken: "", fbIds: "" };
+
+  /** Đọc token/ID đã lưu trong chrome.storage.local (fbToken / fbIds) */
+  function readStoredCreds() {
+    return storedCreds || { fbToken: "", fbIds: "" };
+  }
+
+  /** Nạp token/ID từ chrome.storage.local vào cache */
+  async function loadStoredCreds() {
+    try {
+      if (typeof chrome === "undefined" || !chrome.storage) return;
+      const res = await new Promise((resolve) => {
+        try {
+          chrome.storage.local.get(["fbToken", "fbIds"], (r) =>
+            resolve(r || {}),
+          );
+        } catch (e) {
+          resolve({});
+        }
+      });
+      storedCreds = {
+        fbToken: (res.fbToken || "").trim(),
+        fbIds: res.fbIds || "",
+      };
+    } catch (e) {
+      storedCreds = { fbToken: "", fbIds: "" };
+    }
+  }
+
+  /** Cập nhật nhãn trạng thái token/ID dùng chung trên trang Care Camp */
+  function renderCredsStatus() {
+    const el = $("ccCredsStatus");
+    if (!el) return;
+    const token = getToken();
+    const ids = getAccountIds();
+    if (token && ids.length) {
+      el.textContent = `✅ Token sẵn sàng · ${ids.length} tài khoản quảng cáo`;
+      el.style.background = "#e7f6ec";
+      el.style.color = "#1a7f37";
+      el.style.borderColor = "#b7e4c7";
+    } else if (!token && !ids.length) {
+      el.textContent = "⚠️ Chưa có token / ID tài khoản";
+      el.style.background = "#fdecea";
+      el.style.color = "#b3261e";
+      el.style.borderColor = "#f5c6c3";
+    } else {
+      el.textContent = `⚠️ Thiếu ${!token ? "token" : "ID tài khoản"}`;
+      el.style.background = "#fff7e6";
+      el.style.color = "#b45309";
+      el.style.borderColor = "#ffe0a3";
+    }
   }
 
   /* ------------------ Cấu hình dùng chung (nguồn duy nhất) ------------------
@@ -224,6 +291,8 @@
     dayStamp: "", // khoá ngày của lần chạy hiện tại (YYYY-MM-DD) — dùng để xoá danh sách tắt tự động khi sang ngày mới
     settings: { maxSpend: 10000, maxPrice: 12000, maxCpm: 50000, useCpl: false, useCpc: false },
     timer: null,
+    nextScanAt: 0, // mốc thời gian lần quét tự động kế tiếp (timestamp ms)
+    cdTimer: null, // interval cập nhật đồng hồ đếm ngược
   };
 
   // Timer cho lô ghi state (debounce)
@@ -729,6 +798,7 @@
             <input type="number" class="cc-lim-price" placeholder="Giá" style="width:70px" value="${lim.maxPrice}" />
             <input type="number" class="cc-lim-cpm" placeholder="CPM" style="width:62px" value="${lim.maxCpm}" />
             <button class="cc-btn-save" data-id="${esc(r.adsetId)}" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#1877f2;color:#fff;border:none;border-radius:4px">Lưu</button>
+            <button class="cc-btn-reset" data-id="${esc(r.adsetId)}" title="Reset về ngưỡng chung (QUY TẮC TỰ ĐỘNG TẮT NHÓM)" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#fa383e;color:#fff;border:none;border-radius:4px">↺</button>
           </div>
         </td>
       </tr>`;
@@ -915,6 +985,7 @@
     }
     const sw = $("ccAutoScan");
     if (sw) sw.checked = state.autoScan;
+    renderCountdown();
   }
 
   /* --------------------------------- Hành động ---------------------------- */
@@ -1090,6 +1161,9 @@
       btn.disabled = true;
       btn.innerText = "⏳ Đang quét...";
     }
+    // Đồng hồ tính lại từ thời điểm quét này
+    state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
+    renderCountdown();
 
     try {
       // 0. SANG NGÀY MỚI → xoá danh sách nhóm đã tắt tự động của hôm trước,
@@ -1274,6 +1348,7 @@
         btn.disabled = false;
         btn.innerText = "⚡ QUÉT & TẮT NGAY";
       }
+      renderCountdown();
     }
   }
 
@@ -1363,6 +1438,55 @@
     renderAll();
   }
 
+  /**
+   * Reset ngưỡng riêng của 1 nhóm về NGƯỠNG CHUNG
+   * (khối "QUY TẮC TỰ ĐỘNG TẮT NHÓM (dùng chung)" — ccMaxSpend/ccMaxPrice/ccMaxCpm).
+   */
+  function resetRowLimits(adsetId, btn) {
+    // Đọc ngưỡng chung hiện tại (ưu tiên ô trên giao diện, fallback state.settings)
+    const g = {
+      maxSpend: num($("ccMaxSpend")?.value, state.settings.maxSpend),
+      maxPrice: num($("ccMaxPrice")?.value, state.settings.maxPrice),
+      maxCpm: num($("ccMaxCpm")?.value, state.settings.maxCpm),
+    };
+
+    // Ghi vào nguồn cấu hình chung (localStorage["fb_local_configs"])
+    saveConfigFor(adsetId, g.maxSpend, g.maxPrice, g.maxCpm);
+
+    // Đồng bộ luôn "giá trị gốc" để nút Reset ở bảng Chỉ Số cũng trở về ngưỡng chung
+    const cfg = readConfigs();
+    const cid = String(adsetId);
+    if (cfg[cid]) {
+      cfg[cid].originalMaxSpend = g.maxSpend;
+      cfg[cid].originalMaxPrice = g.maxPrice;
+      cfg[cid].originalMaxCpm = g.maxCpm;
+      writeConfigs(cfg);
+    }
+
+    // Đồng bộ bản sao trong state.monitored
+    const m = state.monitored.find((x) => String(x.adsetId) === String(adsetId));
+    if (m) m.limits = { ...g };
+
+    saveState(true);
+
+    // Cập nhật ô nhập ngay trên dòng hiện tại (trước khi render lại bảng)
+    const tr = btn?.closest("tr");
+    if (tr) {
+      const sInp = tr.querySelector(".cc-lim-spend");
+      const pInp = tr.querySelector(".cc-lim-price");
+      const cInp = tr.querySelector(".cc-lim-cpm");
+      if (sInp) sInp.value = g.maxSpend;
+      if (pInp) pInp.value = g.maxPrice;
+      if (cInp) cInp.value = g.maxCpm;
+    }
+    renderAll();
+
+    toast(
+      `↺ Đã reset về ngưỡng chung: ${money(g.maxSpend)} | ${money(g.maxPrice)} | ${money(g.maxCpm)}`,
+      "ok",
+    );
+  }
+
   /* --------------------- Xoá nhóm đã tắt tự động --------------------- */
   /** Xoá 1 nhóm khỏi danh sách "đã tắt tự động" (KHÔNG bật lại nhóm trên Facebook) */
   async function removeAutoPaused(adsetId) {
@@ -1424,24 +1548,72 @@
     toast(`🗑️ Đã xoá ${n} nhóm đang theo dõi và dừng giám sát.`, "ok");
   }
 
+  /* -------------------------- Đồng hồ đếm ngược -------------------------- */
+  const fmtCountdown = (ms) => {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  };
+
+  function renderCountdown() {
+    const val = $('ccCountdownValue');
+    const lbl = $('ccCountdownLabel');
+    if (!val) return;
+    const running = state.running && state.autoScan && hasMonitoredWork();
+    if (!running) {
+      val.textContent = '--:--';
+      val.style.color = '#65676b';
+      if (lbl) lbl.textContent = state.autoScan ? 'TẠM DỪNG' : 'TẮT';
+      return;
+    }
+    const remaining = state.nextScanAt - Date.now();
+    val.textContent = fmtCountdown(remaining);
+    if (remaining <= 10000) {
+      val.style.color = '#fa383e';
+      if (lbl) lbl.textContent = 'ĐANG QUÉT...';
+    } else {
+      val.style.color = '#7950f2';
+      if (lbl) lbl.textContent = 'QUÉT SAU';
+    }
+  }
+
+  function startCountdownTicker() {
+    if (state.cdTimer) clearInterval(state.cdTimer);
+    state.cdTimer = setInterval(renderCountdown, 1000);
+    renderCountdown();
+  }
+
+  function stopCountdownTicker() {
+    if (state.cdTimer) clearInterval(state.cdTimer);
+    state.cdTimer = null;
+  }
+
   /* ------------------------------ Timer quét ------------------------------ */
   function startTimer() {
     stopTimer();
+    state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
     state.timer = setInterval(() => {
       if (!state.running || !state.autoScan) return;
+      state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
       // ⚡ Không có nhóm nào cần theo dõi → bỏ qua, không gọi API
       if (!hasMonitoredWork()) return;
       doScan(true);
     }, SCAN_INTERVAL_MS);
+    startCountdownTicker();
   }
   function stopTimer() {
     if (state.timer) clearInterval(state.timer);
     state.timer = null;
+    stopCountdownTicker();
+    renderCountdown();
   }
 
   /* ------------------------------- Khởi tạo ------------------------------ */
   async function init() {
     await loadState();
+    // Nạp token/ID đã lưu (dùng chung với mục CẤU HÌNH TÀI KHOẢN CARE CAMP)
+    await loadStoredCreds();
 
     // Khôi phục ngưỡng chung — ưu tiên giá trị đang có ở bảng Auto-Pause (apMax*)
     // để 2 bảng luôn dùng chung 1 bộ ngưỡng chung.
@@ -1482,7 +1654,7 @@
     });
 
     // Lưu ngưỡng chung khi thay đổi (đồng bộ 2 chiều với bảng Auto-Pause)
-    const persistSettings = async () => {
+    const persistSettings = async (silent = true) => {
       state.settings.maxSpend = num($("ccMaxSpend").value, 10000);
       state.settings.maxPrice = num($("ccMaxPrice").value, 12000);
       state.settings.maxCpm = num($("ccMaxCpm").value, 50000);
@@ -1494,14 +1666,47 @@
       syncGlobalThreshold("maxCpm", state.settings.maxCpm);
       await saveState(true);
       renderAll();
+      if (!silent) {
+        toast(
+          `💾 Đã lưu ngưỡng: chi tiêu ${money(state.settings.maxSpend)} đ · giá ${money(state.settings.maxPrice)} đ · CPM ${money(state.settings.maxCpm)} đ`,
+          "ok",
+        );
+      }
     };
-    ["ccMaxSpend", "ccMaxPrice", "ccMaxCpm"].forEach((id) =>
-      $(id)?.addEventListener("change", persistSettings),
-    );
+    ["ccMaxSpend", "ccMaxPrice", "ccMaxCpm"].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      // Khi giá trị thực sự đổi (change) → lưu ngay
+      el.addEventListener("change", () => persistSettings(true));
+      // Khi click ra khỏi ô (blur) → chuẩn hóa + lưu tự động
+      el.addEventListener("blur", () => {
+        const fb = { ccMaxSpend: 10000, ccMaxPrice: 12000, ccMaxCpm: 50000 }[id];
+        const raw = (el.value || "").trim();
+        const v = parseFloat(raw);
+        const finalVal = Number.isFinite(v) && v >= 0 ? v : fb;
+        if (el.value !== String(finalVal)) el.value = finalVal;
+        persistSettings(false);
+      });
+      // Enter cũng lưu ngay
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          el.blur();
+        }
+      });
+    });
     $("ccUseCpl")?.addEventListener("change", persistSettings);
     $("ccUseCpc")?.addEventListener("change", persistSettings);
     $("ccAutoScan")?.addEventListener("change", async (e) => {
       state.autoScan = e.target.checked;
+      if (state.autoScan && state.running) {
+        // Bật lại → đồng hồ tính lại từ đầu
+        state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
+        startCountdownTicker();
+      } else {
+        stopCountdownTicker();
+        renderCountdown();
+      }
       await saveState(true);
     });
 
@@ -1527,6 +1732,8 @@
       const t = e.target;
       if (t.classList?.contains("cc-btn-save")) {
         saveRowLimits(t.getAttribute("data-id"), t);
+      } else if (t.classList?.contains("cc-btn-reset")) {
+        resetRowLimits(t.getAttribute("data-id"), t);
       } else if (t.classList?.contains("cc-btn-remove")) {
         const id = t.getAttribute("data-id");
         state.monitored = state.monitored.filter(
@@ -1548,20 +1755,31 @@
     // Nút xoá toàn bộ nhóm đang theo dõi
     $("ccBtnClearMonitored")?.addEventListener("click", clearAllMonitored);
 
-    // Khi bấm menu ✂️ → đồng bộ token/ID từ trang Bảng Chỉ Số
+    // Khi bấm menu ✂️ → đồng bộ token/ID từ mục CẤU HÌNH TÀI KHOẢN CARE CAMP
     document.getElementById("nav-carecamp")?.addEventListener("click", () => {
       const ti = $("tokenInput");
-      if (ti && ti.value) {
-        window.__ccToken = ti.value.trim();
-        const ct = $("ccTokenInput");
-        if (ct && !ct.value.trim()) ct.value = ti.value.trim();
-      }
+      if (ti && ti.value) window.__ccToken = ti.value.trim();
+      const ct = $("ccTokenInput");
+      if (ct && !ct.value.trim() && ti && ti.value.trim())
+        ct.value = ti.value.trim();
       const ii = $("idInput");
       const ci = $("ccIdsInput");
-      if (ii && ci && !ci.value.trim() && ii.value.trim()) ci.value = ii.value.trim();
+      if (ii && ci && !ci.value.trim() && ii.value.trim())
+        ci.value = ii.value.trim();
+      renderCredsStatus();
       renderAll();
     });
 
+    // Ô dùng chung thay đổi → cập nhật trạng thái hiển thị ngay
+    $("tokenInput")?.addEventListener("input", renderCredsStatus);
+    $("idInput")?.addEventListener("input", renderCredsStatus);
+    $("ccTokenInput")?.addEventListener("input", renderCredsStatus);
+    $("ccIdsInput")?.addEventListener("input", renderCredsStatus);
+
+    renderCredsStatus();
+
+    // Đồng hồ đếm ngược: nếu đang giám sát thì mốc quét kế tiếp tính từ lúc mở tab
+    if (state.running) state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
     renderAll();
     if (state.running) startTimer();
 

@@ -1995,11 +1995,14 @@
         style="margin-bottom: 10px; padding: 8px 10px" />
       <div style="display: flex; gap: 10px; margin-bottom: 10px">
         <button id="actSelectAllBtn" class="btn btn-blue" style="flex: 1; margin-bottom: 0">
-          ✅ CHỌN TẤT CẢ
+          ✅ CHỌN TỐI ĐA 5
         </button>
         <button id="actSelectNoneBtn" class="btn btn-red" style="flex: 1; margin-bottom: 0">
           🚫 BỎ CHỌN TẤT CẢ
         </button>
+      </div>
+      <div style="font-size: 12px; color: #8c939d; margin-bottom: 8px">
+        ℹ️ Chỉ được chọn tối đa <b>5</b> tài khoản quảng cáo.
       </div>
       <div id="actListContainer" style="
             overflow-y: auto;
@@ -3355,17 +3358,12 @@
         </div>
       </div>
 
-      <!-- Tài khoản + nút thao tác (ẩn: dùng token/ID từ Bảng Chỉ Số) -->
-      <div id="ccCredsRow" style="display:none;gap:12px;margin-bottom:14px;flex-wrap:wrap">
-        <div class="input-group-col" style="flex:2;min-width:260px">
-          <label style="font-size:13px;font-weight:bold">🔑 Access Token (bỏ trống nếu đã nhập ở Bảng Chỉ Số)</label>
-          <input type="text" id="ccTokenInput" placeholder="EAAB... / EAAW..." />
-        </div>
-        <div class="input-group-col" style="flex:3;min-width:260px">
-          <label style="font-size:13px;font-weight:bold">🆔 ID tài khoản quảng cáo (cách nhau dấu phẩy)</label>
-          <input type="text" id="ccIdsInput" placeholder="Ví dụ: 1234567890, 9876543210" />
-        </div>
-      </div>
+      <!-- ℹ️ Token & ID tài khoản quảng cáo: DÙNG CHUNG với mục CẤU HÌNH TÀI KHOẢN CARE CAMP -->
+   
+       
+        
+       
+     
 
       <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
         <button id="ccBtnLoad" class="btn btn-blue" style="flex:1;min-width:200px;padding:12px;font-size:14px">
@@ -3390,6 +3388,33 @@
           <input type="checkbox" id="ccAutoScan" checked style="width:16px;height:16px;accent-color:#1877f2" />
           🔁 Tự động quét mỗi 1 phút
         </label>
+
+        <!-- Đồng hồ đếm ngược tới lần quét tự động tiếp theo -->
+        <div
+          id="ccCountdown"
+          title="Thời gian còn lại trước lần quét tự động tiếp theo"
+          style="
+            display:flex;
+            align-items:center;
+            gap:6px;
+            padding:4px 12px;
+            border-radius:14px;
+            background:#f0f2f5;
+            border:1px solid #dfe1e5;
+            color:#65676b;
+            font-size:12px;
+            font-weight:bold;
+            user-select:none;
+          "
+        >
+          <span id="ccCountdownLabel">QUÉT SAU</span>
+          <span
+            id="ccCountdownValue"
+            style="font-variant-numeric:tabular-nums;font-size:13px"
+          >
+            --:--
+          </span>
+        </div>
       </div>
 
       <div id="ccMsg" style="display:none;padding:9px 11px;border-radius:8px;font-size:12px;margin-bottom:12px"></div>

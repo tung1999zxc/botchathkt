@@ -8,6 +8,16 @@ try {
   console.warn("[ApiCounter] Không nạp được api_counter.js:", e?.message);
 }
 
+// ============================================================
+// 🔔 TELEGRAM CONFIG — nguồn cấu hình bot/chat dùng chung
+//    (người dùng tự nhập trong dashboard; không nhập → bot mặc định)
+// ============================================================
+try {
+  importScripts("telegram_config.js");
+} catch (e) {
+  console.warn("[TelegramConfig] Không nạp được telegram_config.js:", e?.message);
+}
+
 // 👉 Khi click icon extension → mở dashboard
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: "dashboard.html" });
@@ -19,9 +29,15 @@ setInterval(listenTelegramReplies, 5000);
 async function listenTelegramReplies() {
   console.log("🔥 BACKGROUND ĐANG CHẠY TELEGRAM");
 
-  const BOT_TOKEN = "8709933422:AAGz6LiC_DP46zjia5JLD95jNNB7Tcjx6wk";
-
   try {
+    // Dùng bot của người dùng (nếu có), không nhập → bot Telegram mặc định
+    const tgCfg = self.TelegramConfig
+      ? await self.TelegramConfig.getConfig()
+      : {
+          botToken: "8709933422:AAGz6LiC_DP46zjia5JLD95jNNB7Tcjx6wk",
+        };
+    const BOT_TOKEN = tgCfg.botToken;
+
     const res = await chrome.storage.local.get([
       "teleLastUpdateId",
       "prepayData",

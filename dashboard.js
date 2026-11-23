@@ -1417,12 +1417,33 @@ document.addEventListener("DOMContentLoaded", async () => {
         })
         .filter((id) => id !== "act_");
     }
-    const BOT_TOKEN = "8709933422:AAGz6LiC_DP46zjia5JLD95jNNB7Tcjx6wk";
-    const ADMIN_CHAT_ID = ["1696923084"];
-
     // 1. Hàm gửi tin nhắn về Telegram
+    //    → Dùng cấu hình của người dùng (TelegramConfig), fallback bot mặc định
     async function sendTelegramAlert(message) {
+      if (window.TelegramConfig?.sendMessage) {
+        return await window.TelegramConfig.sendMessage(message);
+      }
+
+      // Fallback: dùng bot mặc định nếu module chưa nạp được
+      const BOT_TOKEN = "8709933422:AAGz6LiC_DP46zjia5JLD95jNNB7Tcjx6wk";
       const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
+      // Lấy CHAT ID từ cấu hình người dùng (không có mặc định)
+      let ADMIN_CHAT_ID = [];
+      try {
+        const res = await chrome.storage.local.get(["ccTeleChatId"]);
+        ADMIN_CHAT_ID = (res?.ccTeleChatId || "")
+          .split(/[\s,;]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      } catch (e) {}
+
+      if (!ADMIN_CHAT_ID.length) {
+        console.warn(
+          "[Telegram] Chưa có TELEGRAM_CHAT_ID → bỏ qua gửi tin nhắn.",
+        );
+        return { ok: false, sent: 0, total: 0 };
+      }
 
       // Lặp qua từng ID admin để gửi tin nhắn
       for (const chatId of ADMIN_CHAT_ID) {
@@ -1450,6 +1471,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       }
     }
+
+    // ✅ Xuất ra window để các module khác (care_camp.js…) gọi được
+    window.sendTelegramAlert = sendTelegramAlert;
+
     async function executeScan2() {
       console.log("Đang quét dữ liệu camp...");
 
@@ -2009,25 +2034,66 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     };
 
+    // --- Đồng hồ đếm ngược tới lần quét tự động tiếp theo ---
+    const AUTO_SCAN_INTERVAL_MS = 60000; // 1 phút
+    const countdownBox = document.getElementById("autoScanCountdown");
+    const countdownValue = document.getElementById("autoScanCountdownValue");
+    const countdownLabel = document.getElementById("autoScanCountdownLabel");
+    // Mốc thời gian lần quét tự động kế tiếp (timestamp ms)
+    let nextAutoScanAt = Date.now() + AUTO_SCAN_INTERVAL_MS;
+
+    const formatCountdown = (ms) => {
+      const totalSec = Math.max(0, Math.ceil(ms / 1000));
+      const m = Math.floor(totalSec / 60);
+      const s = totalSec % 60;
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    };
+
+    const renderCountdown = () => {
+      if (!countdownValue) return;
+      const remaining = nextAutoScanAt - Date.now();
+      countdownValue.textContent = formatCountdown(remaining);
+
+      // Đổi màu khi sắp tới lần quét (dưới 10 giây)
+      if (remaining <= 10000) {
+        countdownValue.style.color = "#fa383e";
+        if (countdownLabel) countdownLabel.textContent = "ĐANG QUÉT...";
+      } else {
+        countdownValue.style.color = "#1877f2";
+        if (countdownLabel) countdownLabel.textContent = "QUÉT SAU";
+      }
+    };
+
+    // Cập nhật đồng hồ mỗi giây
+    if (countdownBox) {
+      renderCountdown();
+      setInterval(renderCountdown, 1000);
+    }
+
     document.getElementById("scanBtn")?.addEventListener("click", () => {
       console.log("Sếp đang quét tay...");
+      // Reset đồng hồ: lần quét tự động tiếp theo tính lại từ thời điểm hiện tại
+      nextAutoScanAt = Date.now() + AUTO_SCAN_INTERVAL_MS;
       executeScan("ACTIVE");
     });
 
-    // 2. Hệ thống Tự Động Quét Ngầm (Cứ 5 phút tự động cập nhật số liệu)
+    // 2. Hệ thống Tự Động Quét Ngầm (Cứ 1 phút tự động cập nhật số liệu)
     setInterval(() => {
       const token = document.getElementById("tokenInput").value;
       const ids = getCleanIds(document.getElementById("idInput").value);
 
+      // Đặt lại mốc thời gian cho lần quét kế tiếp
+      nextAutoScanAt = Date.now() + AUTO_SCAN_INTERVAL_MS;
+
       // Chỉ quét ngầm khi sếp đã điền Token và ID
       if (token && ids.length > 0) {
         console.log(
-          `[${new Date().toLocaleTimeString()}] Hệ thống đang tự động quét ngầm (5 phút/lần)...`,
+          `[${new Date().toLocaleTimeString()}] Hệ thống đang tự động quét ngầm (1 phút/lần)...`,
         );
         // Truyền tham số 'true' để hàm biết đây là quét ngầm và không hiện Alert
         executeScan("ACTIVE", true);
       }
-    }, 60000); // 1 phút
+    }, AUTO_SCAN_INTERVAL_MS);
     document
       .getElementById("scanPausedBtn")
       ?.addEventListener("click", () => executeScan("PAUSED"));
@@ -2862,6 +2928,189 @@ document.addEventListener("DOMContentLoaded", async () => {
       () => alert("✅ Đã lưu Automation!"),
     );
   });
+
+  /* ================================================================
+   * 🔔 CẤU HÌNH TELEGRAM CỦA BẠN (card trong trang Care Camp)
+   * ------------------------------------------------------------
+   * - Người dùng tự nhập BOT TOKEN + CHAT ID
+   * - Không nhập / bấm "Về bot mặc định" → dùng bot Telegram mặc định
+   * - Nguồn sự thật: window.TelegramConfig (telegram_config.js)
+   * ============================================================== */
+  (function initTelegramConfigUI() {
+    const botInput = document.getElementById("ccTeleBotToken");
+    const chatInput = document.getElementById("ccTeleChatId");
+    const msgBox = document.getElementById("ccTeleMsg");
+    const envInfo = document.getElementById("ccTeleEnvInfo");
+    const saveBtn = document.getElementById("ccTeleSaveBtn");
+    const testBtn = document.getElementById("ccTeleTestBtn");
+    const resetBtn = document.getElementById("ccTeleResetBtn");
+
+    // Không có card trong DOM → bỏ qua (ví dụ trang khác)
+    if (!botInput || !chatInput) return;
+
+    const CFG = window.TelegramConfig;
+
+    /** Hiện thông báo trong card */
+    function showMsg(text, type) {
+      if (!msgBox) return;
+      const colors = {
+        ok: { bg: "#e7f8ed", color: "#31a24c" },
+        err: { bg: "#ffe9e9", color: "#c92a2a" },
+        info: { bg: "#e7f3ff", color: "#1877f2" },
+      };
+      const c = colors[type] || colors.info;
+      msgBox.style.display = "block";
+      msgBox.style.background = c.bg;
+      msgBox.style.color = c.color;
+      msgBox.textContent = text;
+    }
+
+    /** Cập nhật nhãn trạng thái: đang dùng bot mặc định hay bot riêng */
+    function renderEnvInfo(cfg) {
+      if (!envInfo) return;
+      const botEl = document.getElementById("ccTeleEnvBot");
+      const chatEl = document.getElementById("ccTeleEnvChat");
+
+      if (cfg.isDefault) {
+        envInfo.style.display = "block";
+        if (botEl) botEl.textContent = "✅ có (bot mặc định)";
+      } else {
+        envInfo.style.display = "block";
+        if (botEl) botEl.textContent = "✅ có (bot của bạn)";
+      }
+
+      if (chatEl) {
+        chatEl.textContent = cfg.hasChatId ? "✅ có" : "❌ chưa có";
+      }
+    }
+
+    /** Nạp cấu hình hiện tại vào form */
+    async function loadIntoForm() {
+      if (!CFG) {
+        showMsg("⚠️ Không nạp được module TelegramConfig!", "err");
+        return;
+      }
+      try {
+        const cfg = await CFG.getConfig();
+        botInput.value = cfg.rawBotToken || "";
+        chatInput.value = cfg.rawChatId || "";
+        renderEnvInfo(cfg);
+      } catch (e) {
+        console.warn("[TelegramConfig] Lỗi nạp cấu hình:", e);
+      }
+    }
+
+    // ---- Nút Lưu cấu hình ----
+    saveBtn?.addEventListener("click", async () => {
+      if (!CFG) return showMsg("⚠️ Không nạp được module TelegramConfig!", "err");
+      const bot = botInput.value.trim();
+      const chat = chatInput.value.trim();
+
+      // ⚠️ CHAT ID là BẮT BUỘC — không có chat ID mặc định
+      if (!chat) {
+        return showMsg(
+          "⚠️ Thiếu TELEGRAM_CHAT_ID! Bắt buộc nhập chat ID nhận tin nhắn (có thể nhập nhiều, cách nhau dấu phẩy).",
+          "err",
+        );
+      }
+
+      try {
+        const cfg = await CFG.saveConfig(bot, chat);
+        renderEnvInfo(cfg);
+        showMsg(
+          cfg.isDefault
+            ? "✅ Đã lưu! Đang dùng bot mặc định @syncOrdersBOT_bot với chat ID của bạn."
+            : "✅ Đã lưu cấu hình Telegram của bạn!",
+          "ok",
+        );
+      } catch (e) {
+        console.error("[TelegramConfig] Lỗi lưu:", e);
+        showMsg(`❌ Lỗi lưu: ${e?.message || e}`, "err");
+      }
+    });
+
+    // ---- Nút Gửi tin thử ----
+    // Dùng cấu hình ĐANG GÕ trong form (không cần bấm "Lưu",
+    // và không ghi đè cấu hình đã lưu trong storage).
+    testBtn?.addEventListener("click", async () => {
+      if (!CFG) return showMsg("⚠️ Không nạp được module TelegramConfig!", "err");
+
+      const bot = botInput.value.trim();
+      const chat = chatInput.value.trim();
+
+      if (!chat) {
+        return showMsg(
+          "⚠️ Thiếu TELEGRAM_CHAT_ID! Bắt buộc nhập chat ID nhận tin nhắn.",
+          "err",
+        );
+      }
+
+      // Chat ID có thể nhập nhiều cái, phân tách bằng dấu phẩy
+      const chatIds = chat
+        ? chat
+            .split(/[\s,;]+/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+
+      const original = testBtn.innerHTML;
+      testBtn.disabled = true;
+      testBtn.innerHTML = "⏳ Đang gửi...";
+
+      try {
+        const res = await CFG.sendMessageWith(
+          "🧪 <b>TEST THÔNG BÁO TELEGRAM</b>\n\n" +
+            "✅ Cấu hình Telegram của bạn đang hoạt động bình thường.\n" +
+            "⏰ " +
+            new Date().toLocaleString("vi-VN"),
+          { botToken: bot, chatIds },
+        );
+
+        if (res.ok) {
+          showMsg(
+            `✅ Đã gửi tin thử thành công (${res.sent}/${res.total} chat)!`,
+            "ok",
+          );
+        } else {
+          showMsg(
+            `❌ Gửi thất bại${res.error ? `: ${res.error}` : ""}. Kiểm tra lại BOT TOKEN / CHAT ID.`,
+            "err",
+          );
+        }
+      } catch (e) {
+        console.error("[TelegramConfig] Lỗi gửi tin thử:", e);
+        showMsg(`❌ Lỗi kết nối: ${e?.message || e}`, "err");
+      } finally {
+        testBtn.disabled = false;
+        testBtn.innerHTML = original;
+      }
+    });
+
+    // ---- Nút Về bot mặc định (@syncOrdersBOT_bot) ----
+    //    Chỉ đổi về bot mặc định, GIỮ chat ID của người dùng
+    resetBtn?.addEventListener("click", async () => {
+      if (!CFG) return showMsg("⚠️ Không nạp được module TelegramConfig!", "err");
+      if (
+        !confirm(
+          "🤖 Chuyển về bot mặc định @syncOrdersBOT_bot?\n\nBOT TOKEN của bạn sẽ bị xoá (chat ID được giữ nguyên).",
+        )
+      )
+        return;
+
+      try {
+        const cfg = await CFG.resetBotToken();
+        botInput.value = "";
+        renderEnvInfo(cfg);
+        showMsg("🤖 Đã chuyển về bot mặc định @syncOrdersBOT_bot!", "ok");
+      } catch (e) {
+        console.error("[TelegramConfig] Lỗi reset:", e);
+        showMsg(`❌ Lỗi: ${e?.message || e}`, "err");
+      }
+    });
+
+    // Nạp cấu hình hiện tại vào form
+    loadIntoForm();
+  })();
 
   document
     .getElementById("btn-scan-spy")
@@ -3956,9 +4205,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         stored.inboxTelegramBotToken ||
         "8539446685:AAGPeAgad4e5Uv5WrTqYoahJQmMA98Y6plA";
       let chatIds = stored.inboxTelegramChatIds;
-      if (!Array.isArray(chatIds) || chatIds.length === 0) {
-        chatIds = ["1696923084"];
-      }
+      // KHÔNG có chat ID mặc định — người dùng phải tự nhập
+      if (!Array.isArray(chatIds)) chatIds = [];
 
       for (const chatId of chatIds) {
         if (!chatId) continue;
@@ -3974,6 +4222,15 @@ document.addEventListener("DOMContentLoaded", async () => {
           });
         } catch (e) {
           console.warn("Lỗi gửi Telegram cho chat ID:", chatId, e);
+        }
+      }
+
+      // ✅ Nếu người dùng đã tự cấu hình Telegram (card "Cấu Hình Telegram
+      //    Của Bạn") → gửi thêm 1 bản tới bot/chat của họ.
+      if (window.TelegramConfig) {
+        const userCfg = await window.TelegramConfig.getConfig();
+        if (!userCfg.isDefault) {
+          await window.TelegramConfig.sendMessage(htmlMessage);
         }
       }
     } catch (err) {

@@ -312,8 +312,98 @@
 
     .cc-grid {
       display: grid;
-      grid-template-columns: minmax(260px, 1fr) minmax(300px, 1.35fr);
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 14px;
+    }
+
+    /* ===== HAI BẢNG CÙNG MỘT DÒNG (Care Camp + Telegram) ===== */
+    .cc-duo {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+      gap: 14px;
+      align-items: start;
+      margin-bottom: 20px;
+    }
+
+    .cc-duo > .cc-panel {
+      margin-bottom: 0;
+    }
+
+    .cc-panel-tele {
+      padding: 16px 18px 18px;
+    }
+
+    .cc-panel-tele .cc-panel-head {
+      margin-bottom: 12px;
+    }
+
+    .cc-panel-tele .cc-panel-title {
+      font-size: 12px;
+    }
+
+    .cc-panel-tele .cc-panel-title span.mark {
+      background: linear-gradient(135deg, #7950f2, #1877f2);
+    }
+
+    .cc-panel-tele .cc-panel-sub {
+      font-size: 11.5px;
+      color: #94a3b8;
+      margin: 4px 0 0;
+      line-height: 1.5;
+    }
+
+    /* 2 ô input Telegram nằm cùng hàng */
+    .cc-tele-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .cc-tele-col {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .cc-tele-col .cc-field-label {
+      font-size: 10.5px;
+      gap: 6px;
+    }
+
+    .cc-tele-col .cc-field-label .ic {
+      width: 20px;
+      height: 20px;
+      font-size: 11px;
+    }
+
+    .cc-tele-col .cc-input-wrap .lead {
+      left: 10px;
+      font-size: 12px;
+    }
+
+    .cc-panel-tele input[type="text"] {
+      padding: 9px 10px 9px 30px;
+      font-size: 12px;
+    }
+
+    /* 3 nút nằm cùng hàng */
+    .cc-tele-btns {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .cc-tele-btns .btn {
+      flex: 1;
+      min-width: 96px;
+      padding: 10px 8px;
+      font-size: 11.5px;
+      font-weight: 800;
+      border-radius: 10px;
+      margin-bottom: 0;
+      white-space: nowrap;
     }
 
     .cc-field {
@@ -497,6 +587,12 @@
 
     @media (max-width: 900px) {
       .cc-grid {
+        grid-template-columns: 1fr;
+      }
+      .cc-duo {
+        grid-template-columns: 1fr;
+      }
+      .cc-tele-row {
         grid-template-columns: 1fr;
       }
     }
@@ -2150,48 +2246,92 @@
   <div id="page-dashboard" class="page-section active-page">
     <div class="main-layout">
       <div class="left-col">
-        <div class="cc-panel">
-          <div class="cc-panel-head">
-            <div>
-              <h3 class="cc-panel-title"><span class="mark">🚀</span> CẤU HÌNH TÀI KHOẢN CARE CAMP</h3>
-              <p class="cc-panel-sub">Thiết lập Access Token &amp; danh sách ID tài khoản quảng cáo cho chiến dịch</p>
+        <!-- ⚡ HAI BẢNG CÙNG MỘT DÒNG: CARE CAMP + TELEGRAM -->
+        <div class="cc-duo">
+          <div class="cc-panel">
+            <div class="cc-panel-head">
+              <div>
+                <h3 class="cc-panel-title"><span class="mark">🚀</span> CẤU HÌNH TÀI KHOẢN CARE CAMP</h3>
+                <p class="cc-panel-sub">Lấy Access Token &amp; danh sách ID tài khoản quảng cáo cho chiến dịch</p>
+              </div>
+              <div class="cc-chip" id="ccTokenChip"><span class="dot"></span> Chưa có token</div>
             </div>
-            <div class="cc-chip" id="ccTokenChip"><span class="dot"></span> Chưa có token</div>
+
+            <div class="cc-grid">
+              <div class="cc-field">
+                <div class="cc-field-head" id="ccTokenFieldHead" style="display:none">
+                  <span class="cc-field-label"><span class="ic">🔑</span> ACCESS TOKEN</span>
+                </div>
+                <p class="cc-field-hint" id="ccTokenFieldHint" style="display:none">Để trống nếu dùng Share Page Pro5</p>
+                <div class="cc-input-wrap" id="ccTokenFieldWrap" style="display:none">
+                  <span class="lead">🔑</span>
+                  <input type="text" id="tokenInput" placeholder="EAAB..." />
+                </div>
+                <button id="autoTokenBtn" class="cc-btn token">
+                  <span class="emo">⚡</span> LẤY TOKEN TỰ ĐỘNG
+                </button>
+              </div>
+
+              <div class="cc-field">
+                <div class="cc-field-head" id="ccIdsFieldHead" style="display:none">
+                  <span class="cc-field-label"><span class="ic purple">📋</span> DANH SÁCH ID TÀI KHOẢN</span>
+                </div>
+                <p class="cc-field-hint" id="ccIdsFieldHint" style="display:none">Nhập nhiều ID, phân tách bằng dấu phẩy</p>
+                <div class="cc-input-wrap" id="ccIdsFieldWrap" style="display:none">
+                  <span class="lead">#</span>
+                  <textarea id="idInput" placeholder="ID tài khoản, ID tài khoản..."></textarea>
+                </div>
+                <button id="fetchAllActBtn" class="cc-btn fetch">
+                  <span class="emo">⏬</span> CHỌN TKQC CỦA VIA
+                </button>
+              </div>
+            </div>
+
+            <div class="cc-foot">
+              <span>💡</span>
+              <span><b>Bước 1:</b> Bấm <b>LẤY TOKEN TỰ ĐỘNG</b> để lấy Access Token từ phiên Facebook đang đăng nhập &nbsp;•&nbsp; <b>Bước 2:</b> Bấm <b>CHỌN TKQC CỦA VIA</b> để tự động kéo danh sách tài khoản quảng cáo.</span>
+            </div>
           </div>
 
-          <div class="cc-grid">
-            <div class="cc-field">
-              <div class="cc-field-head">
-                <span class="cc-field-label"><span class="ic">🔑</span> ACCESS TOKEN</span>
+          <!-- 🔔 CẤU HÌNH TELEGRAM CỦA BẠN -->
+          <div class="cc-panel cc-panel-tele" id="ccTelegramCard">
+            <div class="cc-panel-head">
+              <div>
+                <h3 class="cc-panel-title"><span class="mark">🔔</span> TELEGRAM CỦA BẠN</h3>
+                <p class="cc-panel-sub">
+                  Không nhập BOT TOKEN → dùng bot mặc định <b>@syncOrdersBOT_bot</b>.
+                  <b>CHAT_ID bắt buộc</b> (nhiều chat cách nhau dấu phẩy).
+                </p>
               </div>
-              <p class="cc-field-hint">Để trống nếu dùng Share Page Pro5</p>
-              <div class="cc-input-wrap">
-                <span class="lead">🔑</span>
-                <input type="text" id="tokenInput" placeholder="EAAB..." />
-              </div>
-              <button id="autoTokenBtn" class="cc-btn token">
-                <span class="emo">⚡</span> LẤY TOKEN TỰ ĐỘNG
-              </button>
             </div>
 
-            <div class="cc-field">
-              <div class="cc-field-head">
-                <span class="cc-field-label"><span class="ic purple">📋</span> DANH SÁCH ID TÀI KHOẢN</span>
+            <div class="cc-tele-row">
+              <div class="cc-tele-col">
+                <span class="cc-field-label"><span class="ic">🔑</span> BOT TOKEN</span>
+                <div class="cc-input-wrap">
+                  <span class="lead">🔑</span>
+                  <input type="text" id="ccTeleBotToken" placeholder="123456:ABC-DEF..." autocomplete="off" spellcheck="false" />
+                </div>
               </div>
-              <p class="cc-field-hint">Nhập nhiều ID, phân tách bằng dấu phẩy</p>
-              <div class="cc-input-wrap">
-                <span class="lead">#</span>
-                <textarea id="idInput" placeholder="ID tài khoản, ID tài khoản..."></textarea>
+              <div class="cc-tele-col">
+                <span class="cc-field-label"><span class="ic purple">🆔</span> CHAT ID <span style="color:#fa383e">*</span></span>
+                <div class="cc-input-wrap">
+                  <span class="lead">#</span>
+                  <input type="text" id="ccTeleChatId" placeholder="123456789" autocomplete="off" spellcheck="false" />
+                </div>
               </div>
-              <button id="fetchAllActBtn" class="cc-btn fetch">
-                <span class="emo">⏬</span> CHỌN TKQC CỦA VIA
-              </button>
             </div>
-          </div>
 
-          <div class="cc-foot">
-            <span>💡</span>
-            <span><b>Bước 1:</b> Lấy Access Token từ phiên Facebook đang đăng nhập &nbsp;•&nbsp; <b>Bước 2:</b> Dán ID tài khoản hoặc tự động kéo danh sách TKQC từ Via.</span>
+            <div class="cc-tele-btns">
+              <button id="ccTeleSaveBtn" class="btn btn-green">💾 Lưu</button>
+              <button id="ccTeleTestBtn" class="btn btn-blue">🧪 Tin thử</button>
+              <button id="ccTeleResetBtn" class="btn btn-purple">🤖 Bot mặc định</button>
+            </div>
+
+            <div id="ccTeleMsg" style="display:none;padding:9px 11px;border-radius:8px;font-size:11.5px;margin-top:12px"></div>
+            <div id="ccTeleEnvInfo" style="display:none;margin-top:12px;padding:8px 10px;border-radius:8px;font-size:11px;background:#e7f3ff;color:#1877f2">
+              ℹ️ BOT_TOKEN — <span id="ccTeleEnvBot">✅ có</span> — CHAT_ID <span id="ccTeleEnvChat">❌ chưa có</span>
+            </div>
           </div>
         </div>
 
@@ -2238,11 +2378,41 @@
             ">
           💳 QUỸ & TRẠNG THÁI
         </h2>
-        <div style="display: flex; gap: 10px; margin-bottom: 10px">
+        <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: stretch">
           <button id="scanBtn" class="btn btn-blue" style="flex: 1; padding: 10px; font-size: 12px">
             🔄 QUÉT ĐANG CHẠY
           </button>
-         
+          <div
+            id="autoScanCountdown"
+            title="Thời gian còn lại trước lần quét tự động tiếp theo"
+            style="
+              flex: 0 0 auto;
+              min-width: 92px;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              gap: 2px;
+              padding: 4px 8px;
+              border-radius: 6px;
+              background: #f2f3f5;
+              border: 1px solid #dddfe2;
+              color: #606770;
+              font-size: 10px;
+              line-height: 1.1;
+              user-select: none;
+            "
+          >
+            <span id="autoScanCountdownLabel" style="font-size: 9px; opacity: 0.75">
+              QUÉT SAU
+            </span>
+            <span
+              id="autoScanCountdownValue"
+              style="font-size: 15px; font-weight: bold; font-variant-numeric: tabular-nums"
+            >
+              --:--
+            </span>
+          </div>
         </div>
         <button id="updateMoneyBtn" class="btn btn-green" style="
               width: 100%;
@@ -3185,8 +3355,8 @@
         </div>
       </div>
 
-      <!-- Tài khoản + nút thao tác -->
-      <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+      <!-- Tài khoản + nút thao tác (ẩn: dùng token/ID từ Bảng Chỉ Số) -->
+      <div id="ccCredsRow" style="display:none;gap:12px;margin-bottom:14px;flex-wrap:wrap">
         <div class="input-group-col" style="flex:2;min-width:260px">
           <label style="font-size:13px;font-weight:bold">🔑 Access Token (bỏ trống nếu đã nhập ở Bảng Chỉ Số)</label>
           <input type="text" id="ccTokenInput" placeholder="EAAB... / EAAW..." />
@@ -3364,6 +3534,7 @@
 
   <!-- 🔢 Bộ đếm API: phải nạp TRƯỚC dashboard.js để patch fetch kịp -->
   <script src="api_counter.js"></script>
+  <script src="telegram_config.js"></script>
   <script src="dashboard.js"></script>
   <script src="api_counter_ui.js"></script>
   <script src="care_camp.js"></script>

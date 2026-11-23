@@ -39,6 +39,25 @@ var SERVER_URL =
   "https://script.google.com/macros/s/AKfycbyQiV9OcREesbPYs0n97vVG2ur6mQD43LHzeoCaUobuWGIz_UbY6ifxjeRkkvE5mmuP/exec";
 var GEMINI_API_KEY = "AIzaSyDQ6MFJRS0Z8W2aa_NsY4AftY1Qd2qE9kY";
 
+// ================================================================
+// 🎨 UI HELPERS - Panel cấu hình tài khoản (thiết kế mới)
+// ================================================================
+window.setBtnLabel = function (btn, text, emo) {
+  if (!btn) return;
+  btn.innerHTML = emo
+    ? `<span class="emo">${emo}</span> ${text}`
+    : `<span class="emo">${text}</span>`;
+};
+
+window.updateTokenChip = function (state, text) {
+  const chip = document.getElementById("ccTokenChip");
+  if (!chip) return;
+  chip.classList.remove("ok", "warn");
+  if (state === "ok") chip.classList.add("ok");
+  else if (state === "warn") chip.classList.add("warn");
+  chip.innerHTML = `<span class="dot"></span> ${text}`;
+};
+
 window.getHieuQuaCount = function (insights, optimization_goal) {
   if (!insights || !insights.actions) return 0;
 
@@ -842,7 +861,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     const autoTokenBtn = document.getElementById("autoTokenBtn");
     if (autoTokenBtn) {
       autoTokenBtn.addEventListener("click", async () => {
-        autoTokenBtn.innerText = "⏳ ĐANG LẤY...";
+        window.setBtnLabel(autoTokenBtn, "ĐANG LẤY...", "⏳");
+        autoTokenBtn.disabled = true;
+        window.updateTokenChip("warn", "Đang lấy token...");
         try {
           const response = await fetch(
             "https://adsmanager.facebook.com/adsmanager/manage/campaigns",
@@ -857,23 +878,32 @@ document.addEventListener("DOMContentLoaded", async () => {
           if (match && match[1]) {
             document.getElementById("tokenInput").value = match[1];
             chrome.storage.local.set({ fbToken: match[1] });
-            autoTokenBtn.innerText = "✅ THÀNH CÔNG";
+            window.setBtnLabel(autoTokenBtn, "THÀNH CÔNG", "✅");
+            window.updateTokenChip("ok", "Token đã sẵn sàng");
             setTimeout(
-              () => (autoTokenBtn.innerText = "⚡ LẤY TOKEN TỰ ĐỘNG"),
+              () => {
+                window.setBtnLabel(autoTokenBtn, "LẤY TOKEN TỰ ĐỘNG", "⚡");
+                autoTokenBtn.disabled = false;
+              },
               2000,
             );
           } else {
-            autoTokenBtn.innerText = "❌ CHƯA ĐĂNG NHẬP FB";
+            window.setBtnLabel(autoTokenBtn, "CHƯA ĐĂNG NHẬP FB", "❌");
+            window.updateTokenChip("warn", "Chưa đăng nhập Facebook");
             alert(
               "Không tìm thấy Token. Hãy mở 1 tab Facebook để đảm bảo đã đăng nhập!",
             );
             setTimeout(
-              () => (autoTokenBtn.innerText = "⚡ LẤY TOKEN TỰ ĐỘNG"),
+              () => {
+                window.setBtnLabel(autoTokenBtn, "LẤY TOKEN TỰ ĐỘNG", "⚡");
+                autoTokenBtn.disabled = false;
+              },
               3000,
             );
           }
         } catch (e) {
-          autoTokenBtn.innerText = "❌ LỖI TRUY CẬP";
+          window.setBtnLabel(autoTokenBtn, "LỖI TRUY CẬP", "❌");
+          window.updateTokenChip("warn", "Lỗi truy cập");
           
           // setTimeout(
           //   () => (autoTokenBtn.innerText = "⚡ LẤY TOKEN TỰ ĐỘNG"),
@@ -1079,7 +1109,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         const token = document.getElementById("tokenInput").value;
         if (!token) return alert("⚠️ Vui lòng Lấy Token trước khi kéo TKQC!");
 
-        fetchAllActBtn.innerText = "⏳ ĐANG KÉO DỮ LIỆU...";
+        window.setBtnLabel(fetchAllActBtn, "ĐANG KÉO DỮ LIỆU...", "⏳");
+        fetchAllActBtn.disabled = true;
         try {
           const res = await fetch(
             `https://graph.facebook.com/v20.0/me/adaccounts?fields=account_id,name,account_status,currency,time_zone&limit=500&access_token=${token}`,
@@ -1090,16 +1121,17 @@ document.addEventListener("DOMContentLoaded", async () => {
             openSelectActModal(data.data);
           } else {
             alert("❌ Không tìm thấy TKQC nào hoặc Token bị lỗi.");
-            fetchAllActBtn.innerText = "⏬ CHỌN TKQC CỦA VIA";
+            window.setBtnLabel(fetchAllActBtn, "CHỌN TKQC CỦA VIA", "⏬");
           }
         } catch (e) {
           alert("❌ Lỗi mạng khi kéo TKQC!");
-          fetchAllActBtn.innerText = "⏬ CHỌN TKQC CỦA VIA";
+          window.setBtnLabel(fetchAllActBtn, "CHỌN TKQC CỦA VIA", "⏬");
         }
         setTimeout(
-          () =>
-            (fetchAllActBtn.innerText =
-              "⏬ CHỌN TKQC CỦA VIA"),
+          () => {
+            window.setBtnLabel(fetchAllActBtn, "CHỌN TKQC CỦA VIA", "⏬");
+            fetchAllActBtn.disabled = false;
+          },
           3000,
         );
       });
@@ -1227,10 +1259,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         },
         () => {},
       );
-      fetchAllActBtn && (fetchAllActBtn.innerText = `✅ ĐÃ CHỌN & LƯU ${ids.length} TKQC`);
+      if (fetchAllActBtn)
+        window.setBtnLabel(
+          fetchAllActBtn,
+          `ĐÃ CHỌN & LƯU ${ids.length} TKQC`,
+          "✅",
+        );
+      window.updateTokenChip("ok", `${ids.length} TKQC đã chọn`);
       setTimeout(() => {
         if (fetchAllActBtn)
-          fetchAllActBtn.innerText = "⏬ CHỌN TKQC CỦA VIA";
+          window.setBtnLabel(fetchAllActBtn, "CHỌN TKQC CỦA VIA", "⏬");
       }, 3000);
     });
 
@@ -1257,9 +1295,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     chrome.storage.local.get(["fbToken", "fbIds"], (result) => {
-      if (result.fbToken)
+      if (result.fbToken) {
         document.getElementById("tokenInput").value = result.fbToken;
+        window.updateTokenChip("ok", "Token đã sẵn sàng");
+      }
       if (result.fbIds) document.getElementById("idInput").value = result.fbIds;
+    });
+
+    // Cập nhật badge trạng thái token khi người dùng tự nhập
+    document.getElementById("tokenInput")?.addEventListener("input", (e) => {
+      const v = (e.target.value || "").trim();
+      window.updateTokenChip(v ? "ok" : null, v ? "Token đã nhập" : "Chưa có token");
     });
 
     document.getElementById("saveBtn")?.addEventListener("click", () => {

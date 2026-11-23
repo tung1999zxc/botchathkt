@@ -25,6 +25,30 @@
   // Ghi state theo lô (debounce) — ghi storage mỗi 3 phút thay vì mỗi 60s
   const SAVE_DEBOUNCE_MS = 3 * 60 * 1000;
 
+  /* ---------------------------- Ngày làm việc ----------------------------
+   * Sang ngày mới (theo giờ địa phương của máy) danh sách "nhóm đã tắt tự
+   * động" của hôm trước sẽ bị XOÁ và KHÔNG được bật lại, vì chỉ số ngày mới
+   * đã reset về 0 nên mọi ngưỡng đều "trong ngưỡng cho phép" → nếu bật lại
+   * sẽ bật nhầm nhóm vốn đã vượt ngưỡng hôm qua.
+   * ---------------------------------------------------------------------- */
+
+  /** Khoá ngày theo định dạng YYYY-MM-DD (giờ địa phương) */
+  function dayKey(ts = Date.now()) {
+    const d = new Date(ts);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  /** Khoá ngày của 1 bản ghi trong danh sách đã tắt tự động */
+  function pausedDayKey(p) {
+    if (!p) return "";
+    if (p.dayStamp) return String(p.dayStamp);
+    // Dữ liệu cũ (chưa có dayStamp) → suy ra từ pausedAt
+    return p.pausedAt ? dayKey(p.pausedAt) : "";
+  }
+
   /* ------------------------------- Tiện ích ------------------------------ */
   const $ = (id) => document.getElementById(id);
   const esc = (s) =>
@@ -197,6 +221,7 @@
     logs: [], // [{ createdAt, type, adsetName, campaignName, message }]
     running: false,
     autoScan: true,
+    dayStamp: "", // khoá ngày của lần chạy hiện tại (YYYY-MM-DD) — dùng để xoá danh sách tắt tự động khi sang ngày mới
     settings: { maxSpend: 10000, maxPrice: 12000, maxCpm: 50000, useCpl: false, useCpc: false },
     timer: null,
   };
@@ -249,6 +274,7 @@
             running: state.running,
             autoScan: state.autoScan,
             settings: state.settings,
+            dayStamp: state.dayStamp || dayKey(),
           },
         },
         r,
@@ -261,7 +287,10 @@
       chrome.storage.local.get([STORAGE_KEY], (res) => resolve(res)),
     );
     const s = (d && d[STORAGE_KEY]) || null;
-    if (!s) return;
+    if (!s) {
+      state.dayStamp = dayKey();
+      return;
+    }
     state.monitored = Array.isArray(s.monitored) ? s.monitored : [];
     state.autoPaused = (Array.isArray(s.autoPaused) ? s.autoPaused : []).slice(
       0,
@@ -274,6 +303,45 @@
       { maxSpend: 10000, maxPrice: 12000, maxCpm: 50000, useCpl: false, useCpc: false },
       s.settings || {},
     );
+
+    // Sang ngày mới → xoá danh sách "nhóm đã tắt tự động" của hôm trước
+    // và KHÔNG bật lại các nhóm đó (chỉ số ngày mới đã reset về 0).
+    state.dayStamp = dayKey();
+    purgeStaleAutoPaused();
+  }
+
+  /**
+   * Xoá khỏi danh sách "nhóm đã tắt tự động" những nhóm thuộc ngày hôm trước.
+   * KHÔNG bật lại các nhóm này trên Facebook (chỉ số ngày mới đã reset về 0
+   * nên nếu bật lại sẽ bật nhầm nhóm vốn đã vượt ngưỡng hôm qua).
+   * @returns {number} số nhóm đã bị xoá
+   */
+  function purgeStaleAutoPaused() {
+    const today = state.dayStamp || dayKey();
+    const stale = state.autoPaused.filter((p) => pausedDayKey(p) !== today);
+    if (!stale.length) return 0;
+    state.autoPaused = state.autoPaused.filter(
+      (p) => pausedDayKey(p) === today,
+    );
+    pushLog(
+      "info",
+      "-",
+      "",
+      `Sang ngày mới (${today}) — đã xoá ${stale.length} nhóm đã tắt tự động của ngày hôm trước khỏi danh sách (không bật lại vì chỉ số đã reset).`,
+    );
+    return stale.length;
+  }
+
+  /**
+   * Kiểm tra ngày mới mỗi lần quét — nếu đã sang ngày (tab mở qua đêm)
+   * thì xoá danh sách nhóm đã tắt tự động của hôm trước, KHÔNG bật lại.
+   * @returns {number} số nhóm đã bị xoá
+   */
+  function rolloverDayIfNeeded() {
+    const today = dayKey();
+    if (state.dayStamp === today) return 0;
+    state.dayStamp = today;
+    return purgeStaleAutoPaused();
   }
 
   /** Chỉ giữ lại log trong 30 tiếng gần nhất (và tối đa MAX_LOGS bản ghi) */
@@ -997,6 +1065,11 @@
     }
 
     try {
+      // 0. SANG NGÀY MỚI → xoá danh sách nhóm đã tắt tự động của hôm trước,
+      //    KHÔNG bật lại (chỉ số ngày mới đã reset về 0 nên không có nghĩa
+      //    nhóm đó còn vượt ngưỡng).
+      rolloverDayIfNeeded();
+
       const rows = await fetchAdsets(token, ids);
       state.rows = rows;
       let paused = 0;
@@ -1038,6 +1111,7 @@
             maxCpm: limitsFor(row.adsetId).maxCpm,
             reason,
             pausedAt: Date.now(),
+            dayStamp: state.dayStamp || dayKey(),
           });
           state.autoPaused = state.autoPaused.slice(0, MAX_AUTO_PAUSED);
           state.monitored = state.monitored.filter(

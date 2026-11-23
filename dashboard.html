@@ -204,6 +204,303 @@
       border: 1px solid #dddfe2;
     }
 
+    /* ===== PANEL CẤU HÌNH TÀI KHOẢN (THIẾT KẾ LẠI) ===== */
+    .cc-panel {
+      position: relative;
+      background: linear-gradient(180deg, #ffffff 0%, #f7f9fc 100%);
+      border: 1px solid #e4e9f2;
+      border-radius: 18px;
+      padding: 18px 20px 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 30px -18px rgba(24, 119, 242, 0.45),
+        0 2px 6px rgba(16, 24, 40, 0.04);
+      overflow: hidden;
+    }
+
+    .cc-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 4px;
+      background: linear-gradient(90deg, #1877f2, #7950f2, #f56b2a, #31a24c);
+    }
+
+    .cc-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      padding-top: 4px;
+    }
+
+    .cc-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #1c1e21;
+      margin: 0;
+    }
+
+    .cc-panel-title span.mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      color: #fff;
+      background: linear-gradient(135deg, #1877f2, #7950f2);
+      box-shadow: 0 4px 12px -4px rgba(121, 80, 242, 0.8);
+    }
+
+    .cc-panel-sub {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .cc-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid #e4e9f2;
+      background: #fff;
+      color: #64748b;
+      white-space: nowrap;
+      transition: 0.25s;
+    }
+
+    .cc-chip .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #cbd5e1;
+      transition: 0.25s;
+    }
+
+    .cc-chip.ok {
+      color: #16794a;
+      border-color: #b7e4c7;
+      background: #eefaf1;
+    }
+    .cc-chip.ok .dot {
+      background: #31a24c;
+      box-shadow: 0 0 0 3px rgba(49, 162, 76, 0.2);
+    }
+    .cc-chip.warn {
+      color: #b45309;
+      border-color: #f6d9a8;
+      background: #fff8ec;
+    }
+    .cc-chip.warn .dot {
+      background: #f56b2a;
+      box-shadow: 0 0 0 3px rgba(245, 107, 42, 0.18);
+    }
+
+    .cc-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) minmax(300px, 1.35fr);
+      gap: 14px;
+    }
+
+    .cc-field {
+      background: #fff;
+      border: 1px solid #e9edf3;
+      border-radius: 14px;
+      padding: 14px 15px 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: 0.25s;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+
+    .cc-field:hover {
+      border-color: #cdd7e6;
+      box-shadow: 0 8px 24px -14px rgba(24, 119, 242, 0.5);
+      transform: translateY(-1px);
+    }
+
+    .cc-field-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .cc-field-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: #475467;
+    }
+
+    .cc-field-label .ic {
+      width: 22px;
+      height: 22px;
+      border-radius: 7px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      background: #eef3ff;
+      color: #1877f2;
+    }
+
+    .cc-field-label .ic.purple {
+      background: #f3edff;
+      color: #7950f2;
+    }
+
+    .cc-field-hint {
+      font-size: 11.5px;
+      color: #94a3b8;
+      line-height: 1.5;
+      margin: -4px 0 0;
+    }
+
+    .cc-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .cc-input-wrap .lead {
+      position: absolute;
+      left: 12px;
+      font-size: 13px;
+      opacity: 0.65;
+      pointer-events: none;
+    }
+
+    .cc-panel input[type="text"],
+    .cc-panel textarea {
+      width: 100%;
+      padding: 11px 12px 11px 34px;
+      background: #f8fafc;
+      border: 1px solid #e4e9f2;
+      border-radius: 10px;
+      font-size: 13px;
+      font-family: monospace;
+      color: #1c1e21;
+      box-shadow: none;
+      transition: 0.2s;
+    }
+
+    .cc-panel textarea {
+      height: 46px;
+      padding-top: 12px;
+      line-height: 1.6;
+    }
+
+    .cc-panel input[type="text"]:hover,
+    .cc-panel textarea:hover {
+      border-color: #cfd8e6;
+      background: #fff;
+    }
+
+    .cc-panel input[type="text"]:focus,
+    .cc-panel textarea:focus {
+      border-color: #1877f2;
+      background: #fff;
+      box-shadow: 0 0 0 3px rgba(24, 119, 242, 0.14);
+    }
+
+    .cc-panel input::placeholder,
+    .cc-panel textarea::placeholder {
+      color: #a8b3c2;
+      font-family: inherit;
+    }
+
+    .cc-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 11px 14px;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: 0.2s;
+      box-shadow: 0 8px 18px -10px rgba(16, 24, 40, 0.6);
+    }
+
+    .cc-btn .emo {
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    .cc-btn:hover {
+      opacity: 1;
+      transform: translateY(-1px);
+      filter: brightness(1.05);
+      box-shadow: 0 12px 24px -10px rgba(16, 24, 40, 0.55);
+    }
+
+    .cc-btn:active {
+      transform: translateY(0);
+    }
+
+    .cc-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .cc-btn.token {
+      background: linear-gradient(135deg, #f56b2a 0%, #f0652f 55%, #e8590c 100%);
+    }
+
+    .cc-btn.fetch {
+      background: linear-gradient(135deg, #7950f2 0%, #6a3fd6 55%, #1877f2 140%);
+    }
+
+    .cc-foot {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px dashed #e4e9f2;
+      font-size: 11.5px;
+      color: #94a3b8;
+      flex-wrap: wrap;
+    }
+
+    .cc-foot b {
+      color: #64748b;
+      font-weight: 700;
+    }
+
+    @media (max-width: 900px) {
+      .cc-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     /* Thẻ tổng quan (Care Camp) */
     .cc-card {
       background: #fff;
@@ -1853,39 +2150,51 @@
   <div id="page-dashboard" class="page-section active-page">
     <div class="main-layout">
       <div class="left-col">
-        <h1 style="
-              margin-top: 0;
-              color: #1877f2;
-              font-size: 20px;
-              font-weight: bold;
-            ">
-          🚀 CẤU HÌNH TÀI KHOẢN CARE CAMP
-        </h1>
-        <div class="input-group">
-          <div class="input-group-col" style="flex: 2">
-            <div style="display: flex; gap: 10px; flex-direction: column">
-              <input type="text" id="tokenInput"
-                placeholder="Access Token (EAAB...) - Bỏ trống nếu Share Page Pro5" />
-              <div style="display: flex; gap: 6px">
-                <button id="autoTokenBtn" class="btn btn-orange" style="margin-bottom: 0; flex: 1">
-                  ⚡ LẤY TOKEN TỰ ĐỘNG
-                </button>
-                
+        <div class="cc-panel">
+          <div class="cc-panel-head">
+            <div>
+              <h3 class="cc-panel-title"><span class="mark">🚀</span> CẤU HÌNH TÀI KHOẢN CARE CAMP</h3>
+              <p class="cc-panel-sub">Thiết lập Access Token &amp; danh sách ID tài khoản quảng cáo cho chiến dịch</p>
+            </div>
+            <div class="cc-chip" id="ccTokenChip"><span class="dot"></span> Chưa có token</div>
+          </div>
+
+          <div class="cc-grid">
+            <div class="cc-field">
+              <div class="cc-field-head">
+                <span class="cc-field-label"><span class="ic">🔑</span> ACCESS TOKEN</span>
               </div>
-             
+              <p class="cc-field-hint">Để trống nếu dùng Share Page Pro5</p>
+              <div class="cc-input-wrap">
+                <span class="lead">🔑</span>
+                <input type="text" id="tokenInput" placeholder="EAAB..." />
+              </div>
+              <button id="autoTokenBtn" class="cc-btn token">
+                <span class="emo">⚡</span> LẤY TOKEN TỰ ĐỘNG
+              </button>
+            </div>
+
+            <div class="cc-field">
+              <div class="cc-field-head">
+                <span class="cc-field-label"><span class="ic purple">📋</span> DANH SÁCH ID TÀI KHOẢN</span>
+              </div>
+              <p class="cc-field-hint">Nhập nhiều ID, phân tách bằng dấu phẩy</p>
+              <div class="cc-input-wrap">
+                <span class="lead">#</span>
+                <textarea id="idInput" placeholder="ID tài khoản, ID tài khoản..."></textarea>
+              </div>
+              <button id="fetchAllActBtn" class="cc-btn fetch">
+                <span class="emo">⏬</span> CHỌN TKQC CỦA VIA
+              </button>
             </div>
           </div>
-          <div class="input-group-col" style="flex: 3">
-            <textarea id="idInput" placeholder="Nhập ID Tài Khoản (Cách nhau dấu phẩy)">
-              
-            </textarea>
-            <button id="fetchAllActBtn" class="btn btn-purple" style="margin-bottom: 0">
-              ⏬ CHỌN TKQC CỦA VIA
-            </button>
+
+          <div class="cc-foot">
+            <span>💡</span>
+            <span><b>Bước 1:</b> Lấy Access Token từ phiên Facebook đang đăng nhập &nbsp;•&nbsp; <b>Bước 2:</b> Dán ID tài khoản hoặc tự động kéo danh sách TKQC từ Via.</span>
           </div>
         </div>
 
-    
         <div class="table-wrapper">
           <table>
             <thead>
@@ -3017,6 +3326,7 @@
       <div style="margin-top:8px;font-size:11px;color:#475569;background:#fef2f2;border:1px dashed #fecaca;border-radius:8px;padding:10px">
         💡 Facebook thường cập nhật chỉ số <b>chậm hơn bình thường</b>, nên nhóm có thể bị tắt sớm khi thực tế chưa vượt ngưỡng. Bấm <b>⚡ QUÉT &amp; TẮT NGAY</b> để đọc lại chỉ số mới nhất: nhóm nào <b>đã trở lại trong ngưỡng cho phép</b> sẽ được bật lại tự động.
       </div>
+      
 
       <!-- Nhật ký -->
       <h3 style="font-size:14px;margin:16px 0 10px;color:#0f172a">📜 NHẬT KÝ TỰ ĐỘNG TẮT / BẬT LẠI</h3>

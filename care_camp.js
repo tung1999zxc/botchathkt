@@ -1050,6 +1050,19 @@
     return changed;
   }
 
+  /**
+   * Có nhóm nào cần thực sự giám sát không?
+   *
+   * Quét chỉ có 2 việc:
+   *   1. TẮT nhóm vượt ngưỡng  → chỉ xét nhóm trong state.monitored
+   *   2. BẬT LẠI nhóm đã tắt   → chỉ xét nhóm trong state.autoPaused
+   * Nếu CẢ HAI danh sách đều rỗng thì không có gì để làm → bỏ qua,
+   * không gọi API Meta (tiết kiệm 2 request/tài khoản mỗi lần quét).
+   */
+  function hasMonitoredWork() {
+    return state.monitored.length > 0 || state.autoPaused.length > 0;
+  }
+
   /** Quét & tự động tắt/bật lại nhóm vượt ngưỡng */
   async function doScan(silent = false) {
     const token = getToken();
@@ -1058,6 +1071,20 @@
       if (!silent) toast("❌ Thiếu token hoặc ID tài khoản.", "err");
       return;
     }
+
+    // ⚡ CHỈ QUÉT KHI THỰC SỰ CÓ NHÓM ĐANG GIÁM SÁT
+    //    Không có nhóm theo dõi VÀ không có nhóm đã tắt tự động → bỏ qua
+    //    lần quét này (không gọi API) để không tốn request vô ích.
+    if (!hasMonitoredWork()) {
+      if (!silent) {
+        toast(
+          "ℹ️ Chưa có nhóm nào đang giám sát — bỏ qua lần quét (không tốn API).",
+          "info",
+        );
+      }
+      return;
+    }
+
     const btn = $("ccBtnScan");
     if (btn) {
       btn.disabled = true;
@@ -1402,6 +1429,8 @@
     stopTimer();
     state.timer = setInterval(() => {
       if (!state.running || !state.autoScan) return;
+      // ⚡ Không có nhóm nào cần theo dõi → bỏ qua, không gọi API
+      if (!hasMonitoredWork()) return;
       doScan(true);
     }, SCAN_INTERVAL_MS);
   }

@@ -3234,6 +3234,10 @@
           <label style="font-size: 13px; font-weight: bold; color: #8a3ab9">3. VÀ CPM > (VNĐ):</label>
           <input type="number" id="apMaxCpm" value="50000" placeholder="Ví dụ: 60000" />
         </div>
+        <div class="input-group-col" id="apMaxCpcCol" style="flex: 1; display: none">
+          <label style="font-size: 13px; font-weight: bold; color: #b45309">4. VÀ CPC > (VNĐ):</label>
+          <input type="number" id="apMaxCpc" value="800" placeholder="Ví dụ: 800" />
+        </div>
       </div>
 
       <div
@@ -3247,6 +3251,11 @@
           style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:bold;color:#0e7490;font-size:13px">
           <input type="checkbox" id="apUseCpc" style="width:18px;height:18px;accent-color:#0e7490" />
           🖱️ Sử dụng CPC (Chi phí / Click Link) thay cho CPR
+        </label>
+        <label
+          style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:bold;color:#b45309;font-size:13px">
+          <input type="checkbox" id="apUseCpcCombo" style="width:18px;height:18px;accent-color:#b45309" />
+          🔀 Kết hợp CPC (thêm điều kiện CPC riêng — cần đủ 4 điều kiện)
         </label>
         <span style="font-size:11px;color:#64748b;flex:1">
           💡 Đếm hội thoại Inbox theo tag <b>[N1], [N2]...</b>, tự động <b>NÂNG NGƯỠNG CHI TIÊU (+MaxSpend)</b> khi có
@@ -3294,8 +3303,8 @@
               <!-- <th>CPC (CLICK)</th> -->
               <th>CPM</th>
               <th>QUY TẮC TẮT</th>
-              <th style="width: 250px">
-                CẤU HÌNH RIÊNG (TIỀN | GIÁ MESS | CPM)
+              <th style="width: 300px">
+                CẤU HÌNH RIÊNG (TIỀN | GIÁ MESS | CPC | CPM)
               </th>
             </tr>
           </thead>
@@ -3319,8 +3328,7 @@
       <h2 class="card-title">✂️ TẮT CAMP TỰ ĐỘNG</h2>
       <p style="color:#555;font-size:13px;margin-bottom:14px">
         Tự động tắt nhóm quảng cáo khi <b>ĐỒNG THỜI</b>: tiêu &gt; ngưỡng tiền
-        <b>VÀ</b> giá/KQ &gt; ngưỡng giá <b>VÀ</b> CPM &gt; ngưỡng CPM. Dùng token
-        &amp; ID tài khoản đang nhập ở trang <b>Bảng Chỉ Số Vít Camp</b>.
+        <b>VÀ</b> giá/KQ &gt; ngưỡng giá <b>VÀ</b> CPM &gt; ngưỡng CPM.</b>.
       </p>
 
       <!-- Ngưỡng chung -->
@@ -3342,6 +3350,10 @@
             <label style="font-size:12px;font-weight:bold;color:#7c3aed">3. CPM &gt; (VNĐ)</label>
             <input type="number" id="ccMaxCpm" value="50000" />
           </div>
+          <div class="input-group-col" id="ccMaxCpcCol" style="display:none">
+            <label style="font-size:12px;font-weight:bold;color:#b45309">4. CPC &gt; (VNĐ)</label>
+            <input type="number" id="ccMaxCpc" value="800" />
+          </div>
           <div class="input-group-col">
             <label style="font-size:12px;font-weight:bold;color:#334155">Chế độ chỉ số</label>
             <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px">
@@ -3352,6 +3364,10 @@
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
                 <input type="checkbox" id="ccUseCpc" style="width:16px;height:16px;accent-color:#1877f2" />
                 🖱️ Dùng CPC (click link)
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
+                <input type="checkbox" id="ccUseCpcCombo" style="width:16px;height:16px;accent-color:#b45309" />
+                🔀 Kết hợp CPC (cần đủ 4 điều kiện)
               </label>
             </div>
           </div>
@@ -3451,7 +3467,7 @@
               <th style="text-align:right">CPC</th>
               <th style="text-align:right">CPM</th>
               <th style="text-align:center">TRẠNG THÁI</th>
-              <th style="width:260px">NGƯỠNG RIÊNG (TIỀN | GIÁ | CPM)</th>
+              <th style="width:300px">NGƯỠNG RIÊNG (TIỀN | GIÁ | CPC | CPM)</th>
             </tr>
           </thead>
           <tbody id="ccTableBody">
@@ -3507,6 +3523,7 @@
               <th>NHÓM QUẢNG CÁO</th>
               <th style="text-align:right">LÚC TẮT</th>
               <th style="text-align:right">GIÁ / KQ</th>
+              <th style="text-align:right">CPC</th>
               <th style="text-align:right">CPM</th>
               <th>LÝ DO TẮT</th>
               <th>THỜI ĐIỂM TẮT</th>
@@ -3514,7 +3531,7 @@
             </tr>
           </thead>
           <tbody id="ccPausedBody">
-            <tr><td colspan="9" style="text-align:center;color:#606770;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>
+            <tr><td colspan="10" style="text-align:center;color:#606770;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>
           </tbody>
         </table>
       </div>

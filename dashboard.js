@@ -202,6 +202,10 @@ window.checkAndRaiseThresholdForTag = async function (tag) {
       document.getElementById("apUseCpc")?.checked ||
       window.autoPauseConfig?.useCpc ||
       false;
+    const useCpcCombo =
+      document.getElementById("apUseCpcCombo")?.checked ||
+      window.autoPauseConfig?.useCpcCombo ||
+      false;
 
     console.log(
       `⚡ [Realtime CPL] Kiểm tra nâng ngưỡng cho Tag ${tagBracket}...`,
@@ -229,8 +233,8 @@ window.checkAndRaiseThresholdForTag = async function (tag) {
       }
     }
 
-    // 2. Nếu đang bật CPL, tự động kiểm tra nâng ngưỡng MaxSpend
-    if (!useCpl) return;
+    // 2. Nếu đang bật CPL (hoặc chế độ Kết hợp CPC), tự động kiểm tra nâng ngưỡng MaxSpend
+    if (!useCpl && !useCpcCombo) return;
 
     if (!window.prevHieuQua) window.prevHieuQua = {};
     if (!window.localConfigs) {
@@ -271,6 +275,7 @@ window.checkAndRaiseThresholdForTag = async function (tag) {
           maxSpend: globalMaxSpend,
           maxPrice: globalMaxPrice,
           maxCpm: globalMaxCpm,
+          maxCpc: window.getGlobalMaxCpc ? window.getGlobalMaxCpc() : 800,
         },
       );
 
@@ -344,6 +349,41 @@ window.localConfigs = JSON.parse(
 );
 
 /* =========================================================================
+ * 🧩 HELPER DÙNG CHUNG — trạng thái 3 chế độ chỉ số + ngưỡng CPC riêng
+ * -------------------------------------------------------------------------
+ * - useCpl      : dùng CPL (hội thoại inbox) làm chỉ số giá chính
+ * - useCpc      : dùng CPC (click link) làm chỉ số giá chính (loại trừ với combo)
+ * - useCpcCombo : "Kết hợp CPC" — CPC là điều kiện RIÊNG (ngưỡng maxCpc),
+ *                 cần đủ 4 điều kiện mới tắt camp.
+ * ========================================================================= */
+window.getModeFlags = function () {
+  const read = (id) => document.getElementById(id)?.checked === true;
+  const useCpl =
+    read("apUseCpl") || window.autoPauseConfig?.useCpl === true;
+  const useCpc =
+    read("apUseCpc") || window.autoPauseConfig?.useCpc === true;
+  const useCpcCombo =
+    read("apUseCpcCombo") || window.autoPauseConfig?.useCpcCombo === true;
+  return { useCpl, useCpc, useCpcCombo };
+};
+
+/** Đọc ngưỡng CPC toàn cục (ô apMaxCpc / ccMaxCpc) */
+window.getGlobalMaxCpc = function (fallback = 800) {
+  const ap = parseFloat(document.getElementById("apMaxCpc")?.value);
+  if (Number.isFinite(ap)) return ap;
+  const cc = parseFloat(document.getElementById("ccMaxCpc")?.value);
+  if (Number.isFinite(cc)) return cc;
+  try {
+    const saved = localStorage.getItem("fb_apMaxCpcLimit");
+    const v = parseFloat(saved);
+    if (Number.isFinite(v)) return v;
+  } catch (e) {
+    /* bỏ qua */
+  }
+  return fallback;
+};
+
+/* =========================================================================
  * 🚀 HÀM NÂNG NGƯỠNG DÙNG CHUNG — nguồn cấu hình duy nhất
  * -------------------------------------------------------------------------
  * localStorage["fb_local_configs"] là nguồn sự thật duy nhất cho ngưỡng
@@ -366,6 +406,7 @@ window.raiseThresholdForAdset = function (
   const globalMaxSpend = Number(opts.maxSpend) || 10000;
   const globalMaxPrice = Number(opts.maxPrice) || 12000;
   const globalMaxCpm = Number(opts.maxCpm) || 50000;
+  const globalMaxCpc = Number(opts.maxCpc) || 800;
 
   const prev = window.prevHieuQua[id];
   const cur = Number(effectiveCount) || 0;
@@ -388,6 +429,7 @@ window.raiseThresholdForAdset = function (
   const currentMaxPrice =
     parseFloat(local.maxPrice ?? local.maxCpr) || globalMaxPrice;
   const currentMaxCpm = parseFloat(local.maxCpm) || globalMaxCpm;
+  const currentMaxCpc = parseFloat(local.maxCpc) || globalMaxCpc;
 
   // maxSpend mới = ngưỡng cũ + (ngưỡng giá × số KQ tăng thêm)
   const newMaxSpend = currentMaxSpend + currentMaxPrice * diff;
@@ -397,9 +439,11 @@ window.raiseThresholdForAdset = function (
     maxSpend: newMaxSpend,
     maxPrice: currentMaxPrice,
     maxCpm: currentMaxCpm,
+    maxCpc: currentMaxCpc,
     originalMaxSpend: local.originalMaxSpend || globalMaxSpend,
     originalMaxPrice: local.originalMaxPrice || globalMaxPrice,
     originalMaxCpm: local.originalMaxCpm || globalMaxCpm,
+    originalMaxCpc: local.originalMaxCpc || globalMaxCpc,
   };
 
   // Lưu xuống localStorage để không mất khi F5
@@ -422,6 +466,7 @@ window.raiseThresholdForAdset = function (
     newMaxSpend,
     currentMaxPrice,
     currentMaxCpm,
+    currentMaxCpc,
   };
 };
 
@@ -431,6 +476,17 @@ window.saveLocalConfig = function (adsetId, btn) {
   const maxSpend = parseFloat(row.querySelector(".local-spend").value) || 0;
   const maxPrice = parseFloat(row.querySelector(".local-price").value) || 0;
   const maxCpm = parseFloat(row.querySelector(".local-cpm").value) || 0;
+  // Ô CPC (chế độ "Kết hợp CPC") — có thể không tồn tại nếu đang ẩn.
+  // Nếu không có ô → giữ ngưỡng CPC đã lưu, nếu chưa có thì lấy ngưỡng chung
+  // (tránh ghi 0 → sau này bật combo sẽ luôn coi là vượt ngưỡng).
+  const cpcInput = row.querySelector(".local-cpc");
+  const globalCpc =
+    typeof window.getGlobalMaxCpc === "function"
+      ? window.getGlobalMaxCpc()
+      : 800;
+  const maxCpc = cpcInput
+    ? parseFloat(cpcInput.value) || 0
+    : parseFloat(window.localConfigs[adsetId]?.maxCpc) || globalCpc;
 
   // Nếu chưa có config thì tạo mới
   if (!window.localConfigs[adsetId]) {
@@ -439,22 +495,28 @@ window.saveLocalConfig = function (adsetId, btn) {
       maxSpend,
       maxPrice,
       maxCpm,
+      maxCpc,
 
       originalMaxSpend: maxSpend,
       originalMaxPrice: maxPrice,
       originalMaxCpm: maxCpm,
+      originalMaxCpc: maxCpc,
     };
   } else {
     // Update config hiện tại
     window.localConfigs[adsetId].maxSpend = maxSpend;
     window.localConfigs[adsetId].maxPrice = maxPrice;
     window.localConfigs[adsetId].maxCpm = maxCpm;
+    if (cpcInput) window.localConfigs[adsetId].maxCpc = maxCpc;
 
     // Nếu chưa có bản gốc thì tạo
     if (!window.localConfigs[adsetId].originalMaxSpend) {
       window.localConfigs[adsetId].originalMaxSpend = maxSpend;
       window.localConfigs[adsetId].originalMaxPrice = maxPrice;
       window.localConfigs[adsetId].originalMaxCpm = maxCpm;
+    }
+    if (!window.localConfigs[adsetId].originalMaxCpc) {
+      window.localConfigs[adsetId].originalMaxCpc = maxCpc;
     }
   }
 
@@ -487,6 +549,8 @@ window.resetLocalConfig = function (adsetId, btn) {
     parseFloat(document.getElementById("apMaxPrice")?.value) || 12000;
   const globalMaxCpm =
     parseFloat(document.getElementById("apMaxCpm")?.value) || 40000;
+  const globalMaxCpc =
+    parseFloat(document.getElementById("apMaxCpc")?.value) || 800;
 
   // Nếu chưa có config riêng -> dùng global
   if (!config) {
@@ -494,10 +558,12 @@ window.resetLocalConfig = function (adsetId, btn) {
       maxSpend: globalMaxSpend,
       maxPrice: globalMaxPrice,
       maxCpm: globalMaxCpm,
+      maxCpc: globalMaxCpc,
 
       originalMaxSpend: globalMaxSpend,
       originalMaxPrice: globalMaxPrice,
       originalMaxCpm: globalMaxCpm,
+      originalMaxCpc: globalMaxCpc,
     };
 
     window.localConfigs[adsetId] = config;
@@ -507,6 +573,7 @@ window.resetLocalConfig = function (adsetId, btn) {
   config.maxSpend = config.originalMaxSpend || globalMaxSpend;
   config.maxPrice = config.originalMaxPrice || globalMaxPrice;
   config.maxCpm = config.originalMaxCpm || globalMaxCpm;
+  config.maxCpc = config.originalMaxCpc || globalMaxCpc;
 
   // Save localStorage
   localStorage.setItem("fb_local_configs", JSON.stringify(window.localConfigs));
@@ -516,6 +583,8 @@ window.resetLocalConfig = function (adsetId, btn) {
   row.querySelector(".local-spend").value = config.maxSpend;
   row.querySelector(".local-price").value = config.maxPrice;
   row.querySelector(".local-cpm").value = config.maxCpm;
+  const cpcInput = row.querySelector(".local-cpc");
+  if (cpcInput) cpcInput.value = config.maxCpc;
 
   // Đồng bộ bảng "Tắt Camp Tự Động" (dùng chung localConfigs)
   if (typeof window.careCampRefreshThresholds === "function") {
@@ -1602,6 +1671,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         parseFloat(document.getElementById("apMaxPrice")?.value) || 12000;
       const globalMaxCpm =
         parseFloat(document.getElementById("apMaxCpm")?.value) || 40000;
+      const globalMaxCpc =
+        parseFloat(document.getElementById("apMaxCpc")?.value) || 800;
 
       chrome.storage.local.get(["prepayData"], async (storageRes) => {
         const savedPrepayData = storageRes.prepayData || {};
@@ -1668,6 +1739,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                   document.getElementById("apUseCpc")?.checked ||
                   window.autoPauseConfig?.useCpc ||
                   false;
+                const useCpcCombo =
+                  document.getElementById("apUseCpcCombo")?.checked ||
+                  window.autoPauseConfig?.useCpcCombo ||
+                  false;
 
                 let hieuQuaCount = 0,
                   hieuQuaLabel = "Tin nhắn";
@@ -1709,7 +1784,14 @@ document.addEventListener("DOMContentLoaded", async () => {
                 let effectiveCount = hieuQuaCount;
                 let effectiveLabel = hieuQuaLabel;
 
-                if (useCpc) {
+                if (useCpcCombo) {
+                  // 🔀 Chế độ "Kết hợp CPC" → CPC là điều kiện RIÊNG (so với maxCpc),
+                  //    nên chỉ số giá chính lấy từ CPL (nếu bật & có dữ liệu inbox)
+                  if (useCpl && inboxCount !== null) {
+                    effectiveCount = inboxCount;
+                    effectiveLabel = "Hội thoại (Inbox)";
+                  }
+                } else if (useCpc) {
                   // Ưu tiên CPC nếu được bật (CPC thường phù hợp cho traffic/click campaign)
                   if (clickLink > 0) {
                     effectiveCount = clickLink;
@@ -1749,6 +1831,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     maxSpend: globalMaxSpend,
                     maxPrice: globalMaxPrice,
                     maxCpm: globalMaxCpm,
+                    maxCpc: globalMaxCpc,
                   },
                 );
 
@@ -1774,11 +1857,13 @@ document.addEventListener("DOMContentLoaded", async () => {
                     window.careCampRefreshThresholds();
                   }
 
-                  const modeText = useCpc
-                    ? "CPC (Click Link)"
-                    : inboxCount !== null && useCpl
-                      ? "CPL (Inbox)"
-                      : "CPR (Quảng cáo)";
+                  const modeText = useCpcCombo
+                    ? "KẾT HỢP CPC (CPL + CPC)"
+                    : useCpc
+                      ? "CPC (Click Link)"
+                      : inboxCount !== null && useCpl
+                        ? "CPL (Inbox)"
+                        : "CPR (Quảng cáo)";
                   console.log(
                     `🚀 [TỰ ĐỘNG ${modeText}] Nhóm ${adset.name} tăng (${prevCount} -> ${effectiveCount}). Nâng ngưỡng: ${newMaxSpend}đ`,
                   );
@@ -1822,6 +1907,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                         : globalMaxPrice) || 12000;
                   const limitCpm =
                     local.maxCpm > 0 ? local.maxCpm : globalMaxCpm;
+                  // Ngưỡng CPC RIÊNG — chỉ dùng ở chế độ "Kết hợp CPC"
+                  const limitCpc =
+                    local.maxCpc > 0 ? local.maxCpc : globalMaxCpc;
 
                   // Xác định chỉ số giá và ngưỡng dựa trên CPC/CPL/CPR
                   let priceLabel = "CPR";
@@ -1829,7 +1917,11 @@ document.addEventListener("DOMContentLoaded", async () => {
                     effectiveCount === 0 || priceNum > limitPrice;
                   let priceDisplayForAlert = pricePerMess;
 
-                  if (useCpc) {
+                  if (useCpcCombo) {
+                    // 🔀 Kết hợp CPC: chỉ số giá chính là CPL/CPR (so với maxPrice),
+                    //    CPC là điều kiện RIÊNG (so với maxCpc) → không ghi đè ở đây.
+                    if (useCpl) priceLabel = "CPL";
+                  } else if (useCpc) {
                     priceLabel = "CPC";
                     // Vẫn áp dụng cùng ngưỡng maxPrice cho CPC
                     priceBreached = clickLink === 0 || cpcValNum > limitPrice;
@@ -1838,11 +1930,27 @@ document.addEventListener("DOMContentLoaded", async () => {
                     priceLabel = "CPL";
                   }
 
-                  if (
-                    spendVal > limitSpend &&
-                    priceBreached &&
-                    cpmVal > limitCpm
-                  ) {
+                  // 🔀 CHẾ ĐỘ "KẾT HỢP CPC": CPC là điều kiện RIÊNG (ngưỡng maxCpc)
+                  // → cần đủ 4 điều kiện: Tiền > maxSpend VÀ Giá > maxPrice
+                  //   VÀ CPC > maxCpc VÀ CPM > maxCpm
+                  // (0 click link → CPC = vô hạn → coi như vượt ngưỡng CPC)
+                  const cpcComboBreached =
+                    clickLink === 0 || cpcValNum > limitCpc;
+
+                  const spendOk = spendVal > limitSpend;
+                  const cpmOk = cpmVal > limitCpm;
+
+                  let shouldPause = false;
+                  if (useCpcCombo) {
+                    // 4 điều kiện (AND)
+                    shouldPause =
+                      spendOk && priceBreached && cpcComboBreached && cpmOk;
+                  } else {
+                    // Hành vi cũ: 3 điều kiện (AND)
+                    shouldPause = spendOk && priceBreached && cpmOk;
+                  }
+
+                  if (shouldPause) {
                     try {
                       const pauseRes = await fetch(
                         `https://graph.facebook.com/v20.0/${adset.id}`,
@@ -1860,20 +1968,33 @@ document.addEventListener("DOMContentLoaded", async () => {
                           window.autoPauseConfig.adsetIds.filter(
                             (aid) => aid !== adset.id,
                           );
-                        const modeText = useCpc
-                          ? "CPC (Click Link)"
-                          : inboxCount !== null && useCpl
-                            ? "CPL (Inbox)"
-                            : "CPR";
-                        const reasonText = useCpc
-                          ? clickLink === 0
-                            ? "Không có click link"
-                            : `Giá CPC đắt (${cpcDisplay} > ${limitPrice.toLocaleString()}đ)`
-                          : effectiveCount === 0
-                            ? "Không có hội thoại/kết quả"
-                            : `Giá đắt (${pricePerMess} > ${limitPrice.toLocaleString()}đ)`;
+                        const modeText = useCpcCombo
+                          ? "KẾT HỢP CPC (CPL + CPC)"
+                          : useCpc
+                            ? "CPC (Click Link)"
+                            : inboxCount !== null && useCpl
+                              ? "CPL (Inbox)"
+                              : "CPR";
+                        const reasonText = useCpcCombo
+                          ? `Không có click link` +
+                            (clickLink === 0
+                              ? ""
+                              : ` · CPC đắt (${cpcDisplay} > ${limitCpc.toLocaleString()}đ)`) +
+                            (effectiveCount === 0
+                              ? " · Không có hội thoại/kết quả"
+                              : ` · Giá đắt (${pricePerMess} > ${limitPrice.toLocaleString()}đ)`)
+                          : useCpc
+                            ? clickLink === 0
+                              ? "Không có click link"
+                              : `Giá CPC đắt (${cpcDisplay} > ${limitPrice.toLocaleString()}đ)`
+                            : effectiveCount === 0
+                              ? "Không có hội thoại/kết quả"
+                              : `Giá đắt (${pricePerMess} > ${limitPrice.toLocaleString()}đ)`;
+                        const cpcExtraLine = useCpcCombo
+                          ? `\n- CPC: ${cpcDisplay} (Ngưỡng CPC: ${limitCpc.toLocaleString()} đ)`
+                          : "";
                         sendTelegramAlert(
-                          `✂️ <b>TỰ ĐỘNG TẮT NHÓM (${modeText})</b> ✂️\n- TK: ${accountName}\n- Nhóm: ${adset.name}\n- Đã tiêu: ${spendVal.toLocaleString()} đ\n- Click Link: ${clickLink}\n- Hội thoại / KQ: ${effectiveCount}\n- Giá: ${priceDisplayForAlert} (Ngưỡng ${priceLabel}: ${limitPrice.toLocaleString()} đ)\n- CPM: ${Math.round(cpmVal).toLocaleString()} đ\n- Lý do: ${reasonText}`,
+                          `✂️ <b>TỰ ĐỘNG TẮT NHÓM (${modeText})</b> ✂️\n- TK: ${accountName}\n- Nhóm: ${adset.name}\n- Đã tiêu: ${spendVal.toLocaleString()} đ\n- Click Link: ${clickLink}\n- Hội thoại / KQ: ${effectiveCount}\n- Giá: ${priceDisplayForAlert} (Ngưỡng ${priceLabel}: ${limitPrice.toLocaleString()} đ)${cpcExtraLine}\n- CPM: ${Math.round(cpmVal).toLocaleString()} đ\n- Lý do: ${reasonText}`,
                         );
                       }
                     } catch (e) {
@@ -1895,15 +2016,23 @@ document.addEventListener("DOMContentLoaded", async () => {
                       maxSpend: "",
                       maxPrice: "",
                       maxCpm: "",
+                      maxCpc: "",
                     }
-                  : { maxSpend: "", maxPrice: "", maxCpm: "" };
+                  : { maxSpend: "", maxPrice: "", maxCpm: "", maxCpc: "" };
                 const actionButton = `<td><button class="toggle-btn ${targetStatus === "ACTIVE" ? "status-active" : "status-paused"}" data-id="${adset.id}" data-status="${targetStatus}">${targetStatus === "ACTIVE" ? "ĐANG CHẠY" : "BẬT LẠI"}</button></td>`;
+
+                // Ô CPC (chế độ "Kết hợp CPC") — chỉ hiện khi bật chế độ combo
+                const comboOn = !!useCpcCombo;
+                const cpcInputHtml = comboOn
+                  ? `<input type="number" class="local-cpc" placeholder="CPC" title="Ngưỡng CPC (chế độ Kết hợp CPC)" style="width:60px; border:1px solid #e0a458; border-radius:4px;" value="${localDisplay.maxCpc || globalMaxCpc}">`
+                  : "";
 
                 const configCol = `
                             <td>
                                 <div style="display: flex; gap: 4px; align-items: center; justify-content: center;">
                                     <input type="number" class="local-spend" placeholder="Tiền" title="Ngưỡng tiêu" style="width:55px; border:1px solid #ddd;" value="${localDisplay.maxSpend || globalMaxSpend}">
                                     <input type="number" class="local-price" placeholder="Giá" title="Ngưỡng giá (CPR/CPL/CPC)" style="width:90px; border:1px solid #ddd;" value="${localDisplay.maxPrice ?? (localDisplay.maxCpr || globalMaxPrice)}">
+                                    ${cpcInputHtml}
                                     <input type="number" class="local-cpm" placeholder="CPM" title="Ngưỡng CPM" style="width:55px; border:1px solid #ddd;" value="${localDisplay.maxCpm || globalMaxCpm}">
                                  <button class="btn-save-local" data-id="${adset.id}" style="padding: 4px 8px; font-size: 11px; cursor: pointer; background: #1877f2; color: #fff; border: none; border-radius: 4px;">Lưu</button>
                                   <button
@@ -2122,8 +2251,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     maxSpend: 10000,
     maxPrice: 12000,
     maxCpm: 40000,
+    maxCpc: 800,
     useCpl: false,
     useCpc: false,
+    useCpcCombo: false,
     adsetIds: [],
   };
 
@@ -2202,6 +2333,15 @@ document.addEventListener("DOMContentLoaded", async () => {
                 : `<td style="text-align:center;"><span style="background:#f0f2f5; color:#606770; padding:3px 8px; border-radius:10px; font-size:10px; font-weight:bold; border:1px solid #dddfe2;">🌐 CHUNG (MẶC ĐỊNH)</span></td>`;
 
               // --- 2. CHÈN CỘT VÀO HTML CỦA BẢNG ---
+              // Ô CPC (chế độ "Kết hợp CPC") — chỉ hiện khi bật chế độ combo
+              const apComboOn =
+                document.getElementById("apUseCpcCombo")?.checked === true ||
+                window.autoPauseConfig?.useCpcCombo === true;
+              const apGlobalMaxCpc =
+                parseFloat(document.getElementById("apMaxCpc")?.value) || 800;
+              const apCpcInputHtml = apComboOn
+                ? `<input type="number" class="local-cpc" title="Ngưỡng CPC (chế độ Kết hợp CPC)" placeholder="CPC" style="width:60px; border: 1px solid #e0a458; border-radius: 4px;" value="${local.maxCpc || apGlobalMaxCpc}">`
+                : "";
               tbody.innerHTML += `
         <tr>
             <td style="text-align:center;"><input type="checkbox" class="ap-checkbox" value="${adset.id}" style="width:16px; height:16px; cursor:pointer;"></td>
@@ -2212,11 +2352,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             <td style="color:#fa383e; font-weight:bold; font-family:monospace;">${priceNum.toLocaleString("vi-VN")} đ</td>
             <td data-cpl="${adset.id}" style="font-size:11px; text-align:center;">${cplDisplay}</td>
             <td style="color:#fa383e; font-weight:bold; font-family:monospace;">${Math.floor(cpmVal).toLocaleString("vi-VN")} đ</td>
-            
+
             ${ruleStatusHtml} <td>
                 <div style="display: flex; gap: 4px; align-items: center; justify-content: center;">
                     <input type="number" class="local-spend" title="Ngưỡng tiêu" placeholder="Tiền" style="width:60px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxSpend}">
                     <input type="number" class="local-price" title="Giá mỗi kết quả (CPR/CPL/CPC)" placeholder="Giá" style="width:90px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxPrice ?? local.maxCpr}">
+                    ${apCpcInputHtml}
                     <input type="number" class="local-cpm" title="Ngưỡng CPM" placeholder="CPM" style="width:60px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxCpm}">
                     <button class="btn-save-local" data-id="${adset.id}" style="padding: 4px 8px; font-size: 11px; cursor: pointer; background: #1877f2; color: #fff; border: none; border-radius: 4px;">Lưu</button>
                      <button
@@ -2309,7 +2450,38 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  ["apMaxSpend", "apMaxPrice", "apMaxCpm"].forEach((inpId) => {
+  // 🔀 Tự động lưu & khôi phục chế độ "KẾT HỢP CPC"
+  // (CPC là điều kiện RIÊNG với ngưỡng maxCpc → cần đủ 4 điều kiện mới tắt camp)
+  const apUseCpcComboEl = document.getElementById("apUseCpcCombo");
+  if (apUseCpcComboEl) {
+    const savedUseCpcCombo = localStorage.getItem("fb_ap_use_cpc_combo");
+    if (savedUseCpcCombo !== null) {
+      apUseCpcComboEl.checked = savedUseCpcCombo === "true";
+      window.autoPauseConfig.useCpcCombo = apUseCpcComboEl.checked;
+    }
+    apUseCpcComboEl.addEventListener("change", () => {
+      localStorage.setItem("fb_ap_use_cpc_combo", apUseCpcComboEl.checked);
+      window.autoPauseConfig.useCpcCombo = apUseCpcComboEl.checked;
+      // Đồng bộ cờ sang bảng "Tắt Camp Tự Động"
+      const ccCombo = document.getElementById("ccUseCpcCombo");
+      if (ccCombo && ccCombo.checked !== apUseCpcComboEl.checked) {
+        ccCombo.checked = apUseCpcComboEl.checked;
+        ccCombo.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      // Ẩn/hiện ô ngưỡng CPC toàn cục
+      const apCpcCol = document.getElementById("apMaxCpcCol");
+      if (apCpcCol) apCpcCol.style.display = apUseCpcComboEl.checked ? "" : "none";
+      console.log(
+        `🔀 [Auto-Pause] Chế độ Kết hợp CPC: ${apUseCpcComboEl.checked ? "BẬT" : "TẮT"}`,
+      );
+    });
+    // Áp dụng trạng thái hiển thị ban đầu
+    const apCpcColInit = document.getElementById("apMaxCpcCol");
+    if (apCpcColInit)
+      apCpcColInit.style.display = apUseCpcComboEl.checked ? "" : "none";
+  }
+
+  ["apMaxSpend", "apMaxPrice", "apMaxCpm", "apMaxCpc"].forEach((inpId) => {
     const el = document.getElementById(inpId);
     if (el) {
       // Ưu tiên key mới, nếu không có thì fallback key cũ (trước khi gộp ô)
@@ -2324,14 +2496,23 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (oldCpr) savedVal = oldCpr;
         else if (oldCpc) savedVal = oldCpc;
       }
+      // Ô ngưỡng CPC dùng key riêng để không đụng key cũ "fb_apMaxCpc"
+      // (key cũ này là fallback của maxPrice)
+      if (inpId === "apMaxCpc") {
+        savedVal = localStorage.getItem("fb_apMaxCpcLimit");
+      }
       if (savedVal) el.value = savedVal;
       el.addEventListener("input", () => {
-        localStorage.setItem(`fb_${inpId}`, el.value);
+        localStorage.setItem(
+          inpId === "apMaxCpc" ? "fb_apMaxCpcLimit" : `fb_${inpId}`,
+          el.value,
+        );
         // Đồng bộ ngưỡng chung sang bảng "Tắt Camp Tự Động"
         const ccMap = {
           apMaxSpend: "ccMaxSpend",
           apMaxPrice: "ccMaxPrice",
           apMaxCpm: "ccMaxCpm",
+          apMaxCpc: "ccMaxCpc",
         };
         const ccEl = document.getElementById(ccMap[inpId]);
         if (ccEl && ccEl.value !== el.value) ccEl.value = el.value;
@@ -2366,6 +2547,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       document.getElementById("apUseCpl")?.checked || false;
     window.autoPauseConfig.useCpc =
       document.getElementById("apUseCpc")?.checked || false;
+    window.autoPauseConfig.useCpcCombo =
+      document.getElementById("apUseCpcCombo")?.checked || false;
+    window.autoPauseConfig.maxCpc = getNum("apMaxCpc", 800);
     window.autoPauseConfig.adsetIds = Array.from(checkedBoxes).map(
       (cb) => cb.value,
     );
@@ -2373,9 +2557,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     document.getElementById("btn-start-ap").style.display = "none";
     document.getElementById("btn-stop-ap").style.display = "block";
-    // Ưu tiên CPC > CPL > CPR để hiển thị chế độ giá chính
+    // Ưu tiên Kết hợp CPC > CPC > CPL > CPR để hiển thị chế độ giá chính
     let modeText;
-    if (window.autoPauseConfig.useCpc) {
+    if (window.autoPauseConfig.useCpcCombo) {
+      modeText = "KẾT HỢP CPC (CPL + CPC — cần đủ 4 điều kiện)";
+    } else if (window.autoPauseConfig.useCpc) {
       modeText = "CPC (Chi phí / Click Link)";
     } else if (window.autoPauseConfig.useCpl) {
       modeText = "CPL (Chi phí / Hội thoại mới từ Inbox)";
@@ -2383,12 +2569,19 @@ document.addEventListener("DOMContentLoaded", async () => {
       modeText = "CPR (Chi phí / Kết quả QC)";
     }
     const priceLimitText = `${window.autoPauseConfig.maxPrice.toLocaleString()}đ (CPR/CPL/CPC)`;
+    const comboConditionText = window.autoPauseConfig.useCpcCombo
+      ? `\nTiêu > ${window.autoPauseConfig.maxSpend.toLocaleString()}đ VÀ Giá > ${priceLimitText} VÀ CPC > ${window.autoPauseConfig.maxCpc.toLocaleString()}đ VÀ CPM > ${window.autoPauseConfig.maxCpm.toLocaleString()}đ`
+      : `\nTiêu > ${window.autoPauseConfig.maxSpend.toLocaleString()}đ VÀ Giá > ${priceLimitText} VÀ CPM > ${window.autoPauseConfig.maxCpm.toLocaleString()}đ`;
     alert(
-      `✅ Đã lưu cấu hình!\nHệ thống đang giám sát ${window.autoPauseConfig.adsetIds.length} nhóm.\nChế độ giá: ${modeText}\nSẽ tự động tắt khi:\nTiêu > ${window.autoPauseConfig.maxSpend.toLocaleString()}đ VÀ Giá > ${priceLimitText} VÀ CPM > ${window.autoPauseConfig.maxCpm.toLocaleString()}đ`,
+      `✅ Đã lưu cấu hình!\nHệ thống đang giám sát ${window.autoPauseConfig.adsetIds.length} nhóm.\nChế độ giá: ${modeText}\nSẽ tự động tắt khi:${comboConditionText}`,
     );
 
     // Nếu dùng CPL/CPC, bắt đầu interval poll inbox định kỳ
-    if (window.autoPauseConfig.useCpl || window.autoPauseConfig.useCpc) {
+    if (
+      window.autoPauseConfig.useCpl ||
+      window.autoPauseConfig.useCpc ||
+      window.autoPauseConfig.useCpcCombo
+    ) {
       if (window.apInboxPollInterval) clearInterval(window.apInboxPollInterval);
 
       // Poll inbox ngay lập tức (1 lần khi bật)

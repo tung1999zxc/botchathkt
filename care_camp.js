@@ -69,6 +69,49 @@
     return Number.isFinite(n) ? n : fb;
   };
 
+  /**
+   * Gửi thông báo Telegram (tắt / bật lại nhóm).
+   *
+   * Dùng chung nguồn cấu hình với dashboard.js:
+   *   window.sendTelegramAlert (do dashboard.js export) → TelegramConfig.sendMessage
+   * Nếu dashboard.js chưa nạp xong → fallback gọi trực tiếp TelegramConfig.
+   *
+   * Không được để lỗi gửi tin làm hỏng cả luồng tắt/bật nhóm.
+   */
+  async function notifyTelegram(html) {
+    try {
+      if (typeof window.sendTelegramAlert === "function") {
+        await window.sendTelegramAlert(html);
+        return true;
+      }
+      if (window.TelegramConfig?.sendMessage) {
+        await window.TelegramConfig.sendMessage(html);
+        return true;
+      }
+      console.warn(
+        "[CARE CAMP] Chưa có TelegramConfig → bỏ qua gửi thông báo tự động.",
+      );
+      return false;
+    } catch (e) {
+      console.warn("[CARE CAMP] Lỗi gửi Telegram:", e?.message || e);
+      return false;
+    }
+  }
+
+  /** Escape HTML cho nội dung Telegram (tránh nhóm tên có ký tự đặc biệt) */
+  const tgEsc = (s) =>
+    String(s == null ? "" : s).replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c],
+    );
+
   function toast(msg, type = "info") {
     const box = $("ccMsg");
     if (!box) return;
@@ -218,18 +261,24 @@
   }
 
   /** Ghi ngưỡng riêng của 1 nhóm vào localConfigs (đồng bộ với bảng Chỉ Số) */
-  function saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm) {
+  function saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm, maxCpc) {
     const cfg = readConfigs();
     const id = String(adsetId);
     const old = cfg[id] || {};
+    const cpcVal =
+      maxCpc !== undefined && maxCpc !== null
+        ? maxCpc
+        : old.maxCpc || state.settings.maxCpc;
     cfg[id] = {
       ...old,
       maxSpend,
       maxPrice,
       maxCpm,
+      maxCpc: cpcVal,
       originalMaxSpend: old.originalMaxSpend || maxSpend,
       originalMaxPrice: old.originalMaxPrice || maxPrice,
       originalMaxCpm: old.originalMaxCpm || maxCpm,
+      originalMaxCpc: old.originalMaxCpc || cpcVal,
     };
     writeConfigs(cfg);
     return cfg[id];
@@ -241,6 +290,7 @@
       maxSpend: { cc: "ccMaxSpend", ap: "apMaxSpend", key: "fb_apMaxSpend" },
       maxPrice: { cc: "ccMaxPrice", ap: "apMaxPrice", key: "fb_apMaxPrice" },
       maxCpm: { cc: "ccMaxCpm", ap: "apMaxCpm", key: "fb_apMaxCpm" },
+      maxCpc: { cc: "ccMaxCpc", ap: "apMaxCpc", key: "fb_apMaxCpcLimit" },
     };
     const m = map[which];
     if (!m) return;
@@ -260,6 +310,7 @@
       maxSpend: { cc: "ccMaxSpend", ap: "apMaxSpend", key: "fb_apMaxSpend" },
       maxPrice: { cc: "ccMaxPrice", ap: "apMaxPrice", key: "fb_apMaxPrice" },
       maxCpm: { cc: "ccMaxCpm", ap: "apMaxCpm", key: "fb_apMaxCpm" },
+      maxCpc: { cc: "ccMaxCpc", ap: "apMaxCpc", key: "fb_apMaxCpcLimit" },
     };
     const m = map[which];
     if (!m) return fallback;
@@ -283,13 +334,21 @@
   /* ------------------------------- Trạng thái ----------------------------- */
   const state = {
     rows: [],
-    monitored: [], // [{ adsetId, accountId, accountName, name, campaignName, limits:{maxSpend,maxPrice,maxCpm} }]
-    autoPaused: [], // [{ adsetId, accountId, accountName, name, campaignName, spend, cpm, price, result, resultLabel, maxSpend, maxPrice, maxCpm, reason, pausedAt }]
+    monitored: [], // [{ adsetId, accountId, accountName, name, campaignName, limits:{maxSpend,maxPrice,maxCpm,maxCpc} }]
+    autoPaused: [], // [{ adsetId, accountId, accountName, name, campaignName, spend, cpm, price, result, resultLabel, maxSpend, maxPrice, maxCpm, maxCpc, reason, pausedAt }]
     logs: [], // [{ createdAt, type, adsetName, campaignName, message }]
     running: false,
     autoScan: true,
     dayStamp: "", // khoá ngày của lần chạy hiện tại (YYYY-MM-DD) — dùng để xoá danh sách tắt tự động khi sang ngày mới
-    settings: { maxSpend: 10000, maxPrice: 12000, maxCpm: 50000, useCpl: false, useCpc: false },
+    settings: {
+      maxSpend: 10000,
+      maxPrice: 12000,
+      maxCpm: 50000,
+      maxCpc: 800,
+      useCpl: false,
+      useCpc: false,
+      useCpcCombo: false,
+    },
     timer: null,
     nextScanAt: 0, // mốc thời gian lần quét tự động kế tiếp (timestamp ms)
     cdTimer: null, // interval cập nhật đồng hồ đếm ngược
@@ -369,7 +428,15 @@
     state.running = !!s.running;
     state.autoScan = s.autoScan !== false;
     state.settings = Object.assign(
-      { maxSpend: 10000, maxPrice: 12000, maxCpm: 50000, useCpl: false, useCpc: false },
+      {
+        maxSpend: 10000,
+        maxPrice: 12000,
+        maxCpm: 50000,
+        maxCpc: 800,
+        useCpl: false,
+        useCpc: false,
+        useCpcCombo: false,
+      },
       s.settings || {},
     );
 
@@ -444,8 +511,17 @@
    * 2. Nếu không có tin nhắn và mục tiêu là Click → link_click — nhãn "Click Link"
    * 3. Bật CPC → dùng inline_link_clicks nếu có
    * 4. Bật CPL → dùng số hội thoại đếm được từ inbox theo tag
+   * 5. Bật "Kết hợp CPC" → CPC là điều kiện RIÊNG (so với maxCpc),
+   *    nên chỉ số giá chính vẫn lấy từ CPL (nếu có) — không lấy click link.
    */
-  function pickResult(metrics, useCpl, useCpc, optimizationGoal, inboxCount) {
+  function pickResult(
+    metrics,
+    useCpl,
+    useCpc,
+    optimizationGoal,
+    inboxCount,
+    useCpcCombo,
+  ) {
     let count = 0;
     let label = "Tin nhắn";
 
@@ -469,7 +545,14 @@
     }
 
     // 3. Bật CPC → ưu tiên click link
-    if (useCpc) {
+    if (useCpcCombo) {
+      // 5. Chế độ "Kết hợp CPC" → CPC có ngưỡng riêng (maxCpc),
+      //    chỉ số giá chính lấy từ CPL (nếu bật & có dữ liệu inbox)
+      if (useCpl && inboxCount != null) {
+        count = inboxCount;
+        label = "Hội thoại (Inbox)";
+      }
+    } else if (useCpc) {
       if (metrics.inlineLinkClicks > 0) {
         count = metrics.inlineLinkClicks;
         label = "Click Link";
@@ -497,30 +580,48 @@
     // Fallback: ngưỡng riêng đã lưu trong state.monitored (dữ liệu cũ) → ngưỡng chung
     const cfg = readConfigs();
     const local = cfg[String(adsetId)];
+    const g = state.settings;
     if (local) {
-      const g = state.settings;
       return {
         maxSpend: num(local.maxSpend, g.maxSpend),
         maxPrice: num(local.maxPrice ?? local.maxCpr, g.maxPrice),
         maxCpm: num(local.maxCpm, g.maxCpm),
+        maxCpc: num(local.maxCpc, g.maxCpc),
       };
     }
     const m = state.monitored.find(
       (x) => String(x.adsetId) === String(adsetId),
     );
-    const g = state.settings;
     return {
       maxSpend: m?.limits?.maxSpend || g.maxSpend,
       maxPrice: m?.limits?.maxPrice || g.maxPrice,
       maxCpm: m?.limits?.maxCpm || g.maxCpm,
+      maxCpc: m?.limits?.maxCpc || g.maxCpc,
     };
   }
 
+  /**
+   * Kiểm tra nhóm có vượt ngưỡng không.
+   *
+   * Chế độ thường (3 điều kiện — AND):
+   *   tiền > maxSpend VÀ giá > maxPrice VÀ CPM > maxCpm
+   *
+   * Chế độ "Kết hợp CPC" (4 điều kiện — AND):
+   *   tiền > maxSpend VÀ giá > maxPrice VÀ CPC > maxCpc VÀ CPM > maxCpm
+   *   (0 click link → CPC = vô hạn → coi như vượt ngưỡng CPC)
+   */
   function isBreached(row) {
     const lim = limitsFor(row.adsetId);
     // Không có kết quả => giá = vô hạn => coi như vượt ngưỡng giá
     const priceBreached = row.resultCount === 0 || row.price > lim.maxPrice;
-    return row.spend > lim.maxSpend && priceBreached && row.cpm > lim.maxCpm;
+    const spendOk = row.spend > lim.maxSpend;
+    const cpmOk = row.cpm > lim.maxCpm;
+
+    if (state.settings.useCpcCombo) {
+      const cpcOk = row.cpcNum === 0 || row.cpcNum > lim.maxCpc;
+      return spendOk && priceBreached && cpcOk && cpmOk;
+    }
+    return spendOk && priceBreached && cpmOk;
   }
 
   /**
@@ -606,9 +707,9 @@
             cpc: parseFloat(ins?.cpc || 0),
             actions: ins?.actions || [],
           };
-          // Đếm hội thoại inbox theo tag [N1] (nếu bật CPL)
+          // Đếm hội thoại inbox theo tag [N1] (nếu bật CPL hoặc chế độ Kết hợp CPC)
           let inboxCount = null;
-          if (state.settings.useCpl) {
+          if (state.settings.useCpl || state.settings.useCpcCombo) {
             try {
               inboxCount = await window.countInboxConversationsByTag(
                 adset.name,
@@ -623,6 +724,7 @@
             state.settings.useCpc,
             adset.optimization_goal,
             inboxCount,
+            state.settings.useCpcCombo,
           );
           const price = res.count > 0 ? Math.round(metrics.spend / res.count) : 0;
 
@@ -790,12 +892,13 @@
                 ? '<span style="background:#fdecea;color:#fa383e;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #fa383e">⚠️ VƯỢT NGƯỠNG</span>'
                 : '<span style="background:#e7f6ec;color:#1a7f37;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #31a24c">✅ An toàn</span>'
           }
-          <div style="font-size:10px;color:#8c939d;margin-top:2px">${money(lim.maxSpend)} | ${money(lim.maxPrice)} | ${money(lim.maxCpm)}</div>
+          <div style="font-size:10px;color:#8c939d;margin-top:2px">${money(lim.maxSpend)} | ${money(lim.maxPrice)}${state.settings.useCpcCombo ? ` | CPC ${money(lim.maxCpc)}` : ""} | ${money(lim.maxCpm)}</div>
         </td>
         <td>
           <div style="display:flex;gap:4px;align-items:center;justify-content:center">
             <input type="number" class="cc-lim-spend" placeholder="Tiền" style="width:62px" value="${lim.maxSpend}" />
             <input type="number" class="cc-lim-price" placeholder="Giá" style="width:70px" value="${lim.maxPrice}" />
+            ${state.settings.useCpcCombo ? `<input type="number" class="cc-lim-cpc" placeholder="CPC" title="Ngưỡng CPC (chế độ Kết hợp CPC)" style="width:58px;border:1px solid #e0a458;border-radius:4px" value="${lim.maxCpc}" />` : ""}
             <input type="number" class="cc-lim-cpm" placeholder="CPM" style="width:62px" value="${lim.maxCpm}" />
             <button class="cc-btn-save" data-id="${esc(r.adsetId)}" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#1877f2;color:#fff;border:none;border-radius:4px">Lưu</button>
             <button class="cc-btn-reset" data-id="${esc(r.adsetId)}" title="Reset về ngưỡng chung (QUY TẮC TỰ ĐỘNG TẮT NHÓM)" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#fa383e;color:#fff;border:none;border-radius:4px">↺</button>
@@ -852,6 +955,7 @@
       const limMaxSpend = lim.maxSpend || saved.maxSpend || 0;
       const limMaxPrice = lim.maxPrice || saved.maxPrice || 0;
       const limMaxCpm = lim.maxCpm || saved.maxCpm || 0;
+      const limMaxCpc = lim.maxCpc || saved.maxCpc || 0;
       return `<tr>
         <td style="font-size:11px;color:#65676b">${esc(m.accountName || "-")}</td>
         <td style="color:#1877f2;font-size:12px;font-weight:bold">${esc(m.campaignName || "-")}</td>
@@ -867,7 +971,7 @@
               ? '<span style="background:#fdecea;color:#fa383e;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #fa383e">⚠️ VƯỢT NGƯỠNG</span>'
               : '<span style="background:#e7f6ec;color:#1a7f37;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #31a24c">✅ An toàn</span>'
           }
-          <div style="font-size:10px;color:#8c939d;margin-top:2px">${money(limMaxSpend)} | ${money(limMaxPrice)} | ${money(limMaxCpm)}</div>
+          <div style="font-size:10px;color:#8c939d;margin-top:2px">${money(limMaxSpend)} | ${money(limMaxPrice)}${state.settings.useCpcCombo ? ` | CPC ${money(limMaxCpc)}` : ""} | ${money(limMaxCpm)}</div>
         </td>
         <td>
           <button class="cc-btn-remove" data-id="${esc(m.adsetId)}" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#fa383e;color:#fff;border:none;border-radius:4px">Bỏ giám sát</button>
@@ -892,7 +996,7 @@
 
     if (!state.autoPaused.length) {
       tb.innerHTML =
-        '<tr><td colspan="9" style="text-align:center;color:#65676b;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>';
+        '<tr><td colspan="10" style="text-align:center;color:#65676b;padding:16px">Chưa có nhóm nào bị tắt tự động.</td></tr>';
       return;
     }
     tb.innerHTML = state.autoPaused
@@ -905,6 +1009,7 @@
         </td>
         <td style="color:#fa383e;font-weight:bold;font-family:monospace;text-align:right">${money(p.spend)} đ</td>
         <td style="color:#fa383e;font-weight:bold;font-family:monospace;text-align:right">${money(p.price)} đ</td>
+        <td style="color:#b45309;font-weight:bold;font-family:monospace;text-align:right">${money(p.cpcNum || 0)} đ</td>
         <td style="color:#fa383e;font-weight:bold;font-family:monospace;text-align:right">${money(Math.floor(p.cpm || 0))} đ</td>
         <td style="font-size:11px;color:#b45309">${esc(p.reason || "-")}</td>
         <td style="font-size:11px;color:#65676b">${esc(
@@ -1043,14 +1148,16 @@
       const inpSpend = tr?.querySelector(".cc-lim-spend")?.value;
       const inpPrice = tr?.querySelector(".cc-lim-price")?.value;
       const inpCpm = tr?.querySelector(".cc-lim-cpm")?.value;
+      const inpCpc = tr?.querySelector(".cc-lim-cpc")?.value;
       const existing = readConfigs()[String(adsetId)] || {};
       const lim = {
         maxSpend: num(inpSpend, num(existing.maxSpend, s.maxSpend)),
         maxPrice: num(inpPrice, num(existing.maxPrice, s.maxPrice)),
         maxCpm: num(inpCpm, num(existing.maxCpm, s.maxCpm)),
+        maxCpc: num(inpCpc, num(existing.maxCpc, s.maxCpc)),
       };
       // Ghi ngưỡng vào nguồn cấu hình chung để bảng Chỉ Số thấy giống
-      saveConfigFor(adsetId, lim.maxSpend, lim.maxPrice, lim.maxCpm);
+      saveConfigFor(adsetId, lim.maxSpend, lim.maxPrice, lim.maxCpm, lim.maxCpc);
       return {
         adsetId: String(adsetId),
         accountId: row?.accountId || "",
@@ -1106,6 +1213,7 @@
         maxSpend: g.maxSpend,
         maxPrice: g.maxPrice,
         maxCpm: g.maxCpm,
+        maxCpc: g.maxCpc,
       });
       if (res?.raised) {
         changed = true;
@@ -1195,7 +1303,14 @@
         const res = await setAdsetStatus(token, row.adsetId, "PAUSED");
         if (res.success) {
           paused++;
-          const reason = `Tiêu ${money(row.spend)} > ${money(limitsFor(row.adsetId).maxSpend)} · Giá ${money(row.price)} > ${money(limitsFor(row.adsetId).maxPrice)} · CPM ${money(Math.floor(row.cpm))} > ${money(limitsFor(row.adsetId).maxCpm)}`;
+          const limNow = limitsFor(row.adsetId);
+          const reason =
+            `Tiêu ${money(row.spend)} > ${money(limNow.maxSpend)}` +
+            ` · Giá ${money(row.price)} > ${money(limNow.maxPrice)}` +
+            (state.settings.useCpcCombo
+              ? ` · CPC ${money(row.cpcNum)} > ${money(limNow.maxCpc)}`
+              : "") +
+            ` · CPM ${money(Math.floor(row.cpm))} > ${money(limNow.maxCpm)}`;
           state.autoPaused.unshift({
             adsetId: row.adsetId,
             accountId: row.accountId,
@@ -1205,11 +1320,13 @@
             spend: row.spend,
             price: row.price,
             cpm: row.cpm,
+            cpcNum: row.cpcNum,
             result: row.resultCount,
             resultLabel: row.resultLabel,
-            maxSpend: limitsFor(row.adsetId).maxSpend,
-            maxPrice: limitsFor(row.adsetId).maxPrice,
-            maxCpm: limitsFor(row.adsetId).maxCpm,
+            maxSpend: limNow.maxSpend,
+            maxPrice: limNow.maxPrice,
+            maxCpm: limNow.maxCpm,
+            maxCpc: limNow.maxCpc,
             reason,
             pausedAt: Date.now(),
             dayStamp: state.dayStamp || dayKey(),
@@ -1223,6 +1340,29 @@
             row.name,
             row.campaignName,
             `Tự động tắt — ${reason}`,
+          );
+          // 🔔 Báo về Telegram: đã tự động tắt nhóm
+          const modeTag = state.settings.useCpcCombo
+            ? "KẾT HỢP CPC (4 điều kiện)"
+            : state.settings.useCpc
+              ? "CPC (Click Link)"
+              : state.settings.useCpl
+                ? "CPL (Hội thoại Inbox)"
+                : "CPR (Kết quả QC)";
+          notifyTelegram(
+            `⛔ <b>TỰ ĐỘNG TẮT NHÓM QUẢNG CÁO</b> ⛔\n` +
+              `- TK: ${tgEsc(row.accountName || "-")}\n` +
+              `- Chiến dịch: ${tgEsc(row.campaignName || "-")}\n` +
+              `- Nhóm: ${tgEsc(row.name || "-")}\n` +
+              `- Chế độ: ${modeTag}\n` +
+              `- Đã tiêu: ${money(row.spend)} đ\n` +
+              `- ${tgEsc(row.resultLabel || "Kết quả")}: ${money(row.resultCount)}` +
+              (state.settings.useCpcCombo
+                ? `\n- CPC: ${money(row.cpcNum)} đ (ngưỡng ${money(limNow.maxCpc)} đ)`
+                : "") +
+              `\n- Giá/KQ: ${money(row.price)} đ (ngưỡng ${money(limNow.maxPrice)} đ)\n` +
+              `- CPM: ${money(Math.floor(row.cpm))} đ (ngưỡng ${money(limNow.maxCpm)} đ)\n` +
+              `- Lý do: <b>${tgEsc(reason)}</b>`,
           );
         } else {
           pushLog(
@@ -1249,6 +1389,7 @@
           maxSpend: p.maxSpend || state.settings.maxSpend,
           maxPrice: p.maxPrice || state.settings.maxPrice,
           maxCpm: p.maxCpm || state.settings.maxCpm,
+          maxCpc: p.maxCpc || state.settings.maxCpc,
         };
         const prevResult = Number(p.result || 0);
         const newResults = Math.max(0, row.resultCount - prevResult);
@@ -1271,7 +1412,21 @@
         const priceOk = newResults > 0 && newPrice <= baseLim.maxPrice;
         const cpmOk = row.cpm <= baseLim.maxCpm;
         const spendOk = row.spend <= newMaxSpend;
-        if (!(priceOk || cpmOk || spendOk)) continue;
+
+        if (state.settings.useCpcCombo) {
+          // 🔀 CHẾ ĐỘ "KẾT HỢP CPC" — CPC là điều kiện BẮT BUỘC phải hết vi phạm
+          //    (0 click link → CPC = vô hạn → chưa đạt → chưa bật lại)
+          const cpcOk =
+            row.cpcNum > 0 && row.cpcNum <= baseLim.maxCpc;
+          // Bật lại khi: CPC đã về ngưỡng VÀ đã có KQ mới với giá <= ngưỡng
+          //   VÀ CPM <= ngưỡng VÀ chi tiêu <= ngưỡng tiêu MỚI
+          const canResume =
+            cpcOk && priceOk && cpmOk && spendOk;
+          if (!canResume) continue;
+        } else {
+          // Hành vi cũ: chỉ cần 1 trong các điều kiện đạt là bật lại (OR)
+          if (!(priceOk || cpmOk || spendOk)) continue;
+        }
 
         const res = await setAdsetStatus(token, p.adsetId, "ACTIVE");
         if (res.success) {
@@ -1285,10 +1440,17 @@
             maxSpend: newMaxSpend,
             maxPrice: baseLim.maxPrice,
             maxCpm: baseLim.maxCpm,
+            maxCpc: baseLim.maxCpc,
           };
 
           // Ghi ngưỡng mới vào nguồn cấu hình chung (đồng bộ bảng Chỉ Số)
-          saveConfigFor(p.adsetId, lim.maxSpend, lim.maxPrice, lim.maxCpm);
+          saveConfigFor(
+            p.adsetId,
+            lim.maxSpend,
+            lim.maxPrice,
+            lim.maxCpm,
+            lim.maxCpc,
+          );
 
           // BẬT LẠI XONG → thêm lại vào bảng GIÁM SÁT để tiếp tục theo dõi.
           // Nếu chỉ số lại vượt ngưỡng ở lần quét kế tiếp → sẽ bị tắt tiếp.
@@ -1327,6 +1489,19 @@
             p.campaignName,
             `Đã bật lại — chỉ số đã trở lại trong ngưỡng (giá mới ${money(newPrice)} đ, CPM ${money(Math.floor(row.cpm))} đ). ` +
               `Nâng ngưỡng tiêu ${money(baseLim.maxSpend)} đ → ${money(newMaxSpend)} đ (+${newResults} KQ mới). Đã thêm lại vào bảng giám sát.`,
+          );
+          // 🔔 Báo về Telegram: đã tự động bật lại nhóm
+          notifyTelegram(
+            `✅ <b>TỰ ĐỘNG BẬT LẠI NHÓM QUẢNG CÁO</b> ✅\n` +
+              `- TK: ${tgEsc(row.accountName || p.accountName || "-")}\n` +
+              `- Chiến dịch: ${tgEsc(row.campaignName || p.campaignName || "-")}\n` +
+              `- Nhóm: ${tgEsc(row.name || p.name || "-")}\n` +
+              `- KQ mới: ${money(newResults)}\n` +
+              `- Giá mới: ${money(newPrice)} đ (ngưỡng ${money(baseLim.maxPrice)} đ)\n` +
+              `- CPC: ${money(row.cpcNum)} đ (ngưỡng ${money(baseLim.maxCpc)} đ)\n` +
+              `- CPM: ${money(Math.floor(row.cpm))} đ (ngưỡng ${money(baseLim.maxCpm)} đ)\n` +
+              `- Ngưỡng tiêu: ${money(baseLim.maxSpend)} đ → <b>${money(newMaxSpend)} đ</b>\n` +
+              `- Trạng thái: <b>Đã bật lại</b> & đã thêm vào bảng giám sát`,
           );
         }
       }
@@ -1385,6 +1560,14 @@
           p?.campaignName || "",
           "Bật lại thủ công từ danh sách nhóm đã tắt tự động",
         );
+        // 🔔 Báo về Telegram: bật lại thủ công
+        notifyTelegram(
+          `🔄 <b>BẬT LẠI NHÓM THỦ CÔNG</b> 🔄\n` +
+            `- TK: ${tgEsc(p?.accountName || "-")}\n` +
+            `- Chiến dịch: ${tgEsc(p?.campaignName || "-")}\n` +
+            `- Nhóm: ${tgEsc(p?.name || adsetId)}\n` +
+            `- Trạng thái: <b>Đã bật lại</b>`,
+        );
         await saveState(true);
         renderAll();
         toast(
@@ -1412,9 +1595,16 @@
     const maxSpend = num(tr.querySelector(".cc-lim-spend")?.value, 0);
     const maxPrice = num(tr.querySelector(".cc-lim-price")?.value, 0);
     const maxCpm = num(tr.querySelector(".cc-lim-cpm")?.value, 0);
+    // Ô CPC (chế độ "Kết hợp CPC") — có thể không tồn tại nếu đang ẩn.
+    // Không có ô → giữ ngưỡng CPC đã lưu, chưa có thì lấy ngưỡng chung
+    // (tránh ghi 0 → sau này bật combo sẽ luôn coi là vượt ngưỡng).
+    const cpcInput = tr.querySelector(".cc-lim-cpc");
+    const maxCpc = cpcInput
+      ? num(cpcInput.value, 0)
+      : readConfigs()[String(adsetId)]?.maxCpc ?? state.settings.maxCpc;
 
     // 1. Ghi vào nguồn cấu hình chung (localStorage["fb_local_configs"])
-    saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm);
+    saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm, maxCpc);
 
     // 2. Đồng bộ bản sao trong state.monitored (để tương thích dữ liệu cũ)
     let m = state.monitored.find((x) => String(x.adsetId) === String(adsetId));
@@ -1426,11 +1616,11 @@
         accountName: row?.accountName || "",
         name: row?.name || "",
         campaignName: row?.campaignName || "",
-        limits: { maxSpend, maxPrice, maxCpm },
+        limits: { maxSpend, maxPrice, maxCpm, maxCpc },
       };
       state.monitored.push(m);
     } else {
-      m.limits = { maxSpend, maxPrice, maxCpm };
+      m.limits = { maxSpend, maxPrice, maxCpm, maxCpc };
     }
     saveState(true);
     btn.innerText = "✅ Đã lưu";
@@ -1448,10 +1638,11 @@
       maxSpend: num($("ccMaxSpend")?.value, state.settings.maxSpend),
       maxPrice: num($("ccMaxPrice")?.value, state.settings.maxPrice),
       maxCpm: num($("ccMaxCpm")?.value, state.settings.maxCpm),
+      maxCpc: num($("ccMaxCpc")?.value, state.settings.maxCpc),
     };
 
     // Ghi vào nguồn cấu hình chung (localStorage["fb_local_configs"])
-    saveConfigFor(adsetId, g.maxSpend, g.maxPrice, g.maxCpm);
+    saveConfigFor(adsetId, g.maxSpend, g.maxPrice, g.maxCpm, g.maxCpc);
 
     // Đồng bộ luôn "giá trị gốc" để nút Reset ở bảng Chỉ Số cũng trở về ngưỡng chung
     const cfg = readConfigs();
@@ -1460,6 +1651,7 @@
       cfg[cid].originalMaxSpend = g.maxSpend;
       cfg[cid].originalMaxPrice = g.maxPrice;
       cfg[cid].originalMaxCpm = g.maxCpm;
+      cfg[cid].originalMaxCpc = g.maxCpc;
       writeConfigs(cfg);
     }
 
@@ -1626,20 +1818,31 @@
       state.settings.maxPrice,
     );
     $("ccMaxCpm").value = readGlobalThreshold("maxCpm", state.settings.maxCpm);
+    $("ccMaxCpc").value = readGlobalThreshold("maxCpc", state.settings.maxCpc);
     state.settings.maxSpend = num($("ccMaxSpend").value, 10000);
     state.settings.maxPrice = num($("ccMaxPrice").value, 12000);
     state.settings.maxCpm = num($("ccMaxCpm").value, 50000);
-    // Cờ chế độ CPL/CPC: ưu tiên giá trị đã lưu ở bảng Auto-Pause
+    state.settings.maxCpc = num($("ccMaxCpc").value, 800);
+    // Cờ chế độ CPL/CPC/Kết hợp CPC: ưu tiên giá trị đã lưu ở bảng Auto-Pause
     const apCplEl = $("apUseCpl");
     const apCpcEl = $("apUseCpc");
+    const apComboEl = $("apUseCpcCombo");
     state.settings.useCpl = apCplEl
       ? apCplEl.checked
       : !!state.settings.useCpl;
     state.settings.useCpc = apCpcEl
       ? apCpcEl.checked
       : !!state.settings.useCpc;
+    state.settings.useCpcCombo = apComboEl
+      ? apComboEl.checked
+      : !!state.settings.useCpcCombo;
     $("ccUseCpl").checked = state.settings.useCpl;
     $("ccUseCpc").checked = state.settings.useCpc;
+    $("ccUseCpcCombo").checked = state.settings.useCpcCombo;
+    // Ẩn/hiện ô ngưỡng CPC toàn cục theo chế độ combo
+    const ccCpcCol = $("ccMaxCpcCol");
+    if (ccCpcCol)
+      ccCpcCol.style.display = state.settings.useCpcCombo ? "" : "none";
     $("ccAutoScan").checked = state.autoScan;
 
     $("ccBtnLoad")?.addEventListener("click", doLoadAdsets);
@@ -1658,29 +1861,41 @@
       state.settings.maxSpend = num($("ccMaxSpend").value, 10000);
       state.settings.maxPrice = num($("ccMaxPrice").value, 12000);
       state.settings.maxCpm = num($("ccMaxCpm").value, 50000);
+      state.settings.maxCpc = num($("ccMaxCpc").value, 800);
       state.settings.useCpl = !!$("ccUseCpl").checked;
       state.settings.useCpc = !!$("ccUseCpc").checked;
+      state.settings.useCpcCombo = !!$("ccUseCpcCombo").checked;
       // Đồng bộ sang bảng Auto-Pause
       syncGlobalThreshold("maxSpend", state.settings.maxSpend);
       syncGlobalThreshold("maxPrice", state.settings.maxPrice);
       syncGlobalThreshold("maxCpm", state.settings.maxCpm);
+      syncGlobalThreshold("maxCpc", state.settings.maxCpc);
       await saveState(true);
       renderAll();
       if (!silent) {
         toast(
-          `💾 Đã lưu ngưỡng: chi tiêu ${money(state.settings.maxSpend)} đ · giá ${money(state.settings.maxPrice)} đ · CPM ${money(state.settings.maxCpm)} đ`,
+          `💾 Đã lưu ngưỡng: chi tiêu ${money(state.settings.maxSpend)} đ · giá ${money(state.settings.maxPrice)} đ` +
+            (state.settings.useCpcCombo
+              ? ` · CPC ${money(state.settings.maxCpc)} đ`
+              : "") +
+            ` · CPM ${money(state.settings.maxCpm)} đ`,
           "ok",
         );
       }
     };
-    ["ccMaxSpend", "ccMaxPrice", "ccMaxCpm"].forEach((id) => {
+    ["ccMaxSpend", "ccMaxPrice", "ccMaxCpm", "ccMaxCpc"].forEach((id) => {
       const el = $(id);
       if (!el) return;
       // Khi giá trị thực sự đổi (change) → lưu ngay
       el.addEventListener("change", () => persistSettings(true));
       // Khi click ra khỏi ô (blur) → chuẩn hóa + lưu tự động
       el.addEventListener("blur", () => {
-        const fb = { ccMaxSpend: 10000, ccMaxPrice: 12000, ccMaxCpm: 50000 }[id];
+        const fb = {
+          ccMaxSpend: 10000,
+          ccMaxPrice: 12000,
+          ccMaxCpm: 50000,
+          ccMaxCpc: 800,
+        }[id];
         const raw = (el.value || "").trim();
         const v = parseFloat(raw);
         const finalVal = Number.isFinite(v) && v >= 0 ? v : fb;
@@ -1697,6 +1912,12 @@
     });
     $("ccUseCpl")?.addEventListener("change", persistSettings);
     $("ccUseCpc")?.addEventListener("change", persistSettings);
+    $("ccUseCpcCombo")?.addEventListener("change", (e) => {
+      // Ẩn/hiện ô ngưỡng CPC toàn cục theo chế độ combo
+      const cpcCol = $("ccMaxCpcCol");
+      if (cpcCol) cpcCol.style.display = e.target.checked ? "" : "none";
+      persistSettings();
+    });
     $("ccAutoScan")?.addEventListener("change", async (e) => {
       state.autoScan = e.target.checked;
       if (state.autoScan && state.running) {
@@ -1710,10 +1931,11 @@
       await saveState(true);
     });
 
-    // Đồng bộ cờ chế độ CPL/CPC sang bảng Auto-Pause (2 chiều)
+    // Đồng bộ cờ chế độ CPL/CPC/Kết hợp CPC sang bảng Auto-Pause (2 chiều)
     const syncModeFlags = () => {
       const apCpl = document.getElementById("apUseCpl");
       const apCpc = document.getElementById("apUseCpc");
+      const apCombo = document.getElementById("apUseCpcCombo");
       if (apCpl && apCpl.checked !== !!$("ccUseCpl")?.checked) {
         apCpl.checked = !!$("ccUseCpl")?.checked;
         apCpl.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1722,9 +1944,14 @@
         apCpc.checked = !!$("ccUseCpc")?.checked;
         apCpc.dispatchEvent(new Event("change", { bubbles: true }));
       }
+      if (apCombo && apCombo.checked !== !!$("ccUseCpcCombo")?.checked) {
+        apCombo.checked = !!$("ccUseCpcCombo")?.checked;
+        apCombo.dispatchEvent(new Event("change", { bubbles: true }));
+      }
     };
     $("ccUseCpl")?.addEventListener("change", syncModeFlags);
     $("ccUseCpc")?.addEventListener("change", syncModeFlags);
+    $("ccUseCpcCombo")?.addEventListener("change", syncModeFlags);
     syncModeFlags();
 
     // Nút trong bảng (dùng event delegation)

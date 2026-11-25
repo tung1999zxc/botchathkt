@@ -2,6 +2,13 @@
 
 Tay ban ghi san: bat buoc nhap key ban quyen truoc khi dung extension. Ban la nguoi tao va quan tri key.
 
+> **DA TRIEN KHAI XONG**
+> - License Server: `https://botchathkt.tung1999zxc.workers.dev`
+> - Trang quan tri: `https://botchathkt.tung1999zxc.workers.dev/admin`
+> - Worker: `botchathkt` | KV Namespace: `license-kv` (ID `0568ad83a0b74ab094d69bcc20b2f610`)
+> - Extension da tro mac dinh ve server nay (`DEFAULT_SERVER_URL` trong `license_core.js`)
+> - Nguoi dung khong can nhap dia chi server - chi nhap key.
+
 ---
 
 ## 1. TONG QUAN
@@ -37,7 +44,6 @@ Nguoi dung mo extension
 4. Mo namespace vua tao > **Settings** > copy **KV Namespace ID** (chuoi 32 ky tu hex)
    - Neu ban da tao san `license-kv` thi lay ID cua namespace do
    - ID hien tai cua repo: xem trong `wrangler.toml`
-
 ### Buoc 2: Gan bien moi truong cho Worker
 
 Vao **Workers & Pages** > worker cua ban > **Settings** > **Bindings** > **Add**:
@@ -53,7 +59,7 @@ Vao **Settings** > **Variables and Secrets** > **Add**:
 | `ADMIN_PASSWORD` | Mat khau cua ban vao trang quan tri | **Secret** |
 | `FB_APP_ID` | App ID Facebook (da co san) | Variable |
 | `FB_APP_SECRET` | App Secret Facebook (da co san) | Secret |
-| `REDIRECT_URI` | `https://<worker>.workers.dev/callback` | Variable |
+| `REDIRECT_URI` | `https://botchathkt.tung1999zxc.workers.dev/callback` | Variable |
 | `EXT_ORIGIN` | `chrome-extension://<ID>` | Variable |
 
 > `ADMIN_PASSWORD` BAT BUOC dat dang **Secret**. Dat trong code thi bat ky ai cung doc duoc.
@@ -91,17 +97,22 @@ npx wrangler deploy
 
 **Kiem tra sau khi deploy:**
 ```
-https://license-kv.<ten-cua-ban>.workers.dev/license/ping
+https://botchathkt.tung1999zxc.workers.dev/license/ping
 ```
 Phai tra JSON: `{"ok":true,"service":"license-server","hasKv":true,"hasAdmin":true}`
 
 Neu `hasKv` hoac `hasAdmin` la `false` -> quay lai Buoc 2.
 
+**Trang quan tri:**
+```
+https://botchathkt.tung1999zxc.workers.dev/admin
+```
+
 ---
 
 ## 3. QUAN TRI KEY
 
-Mo `https://<worker>.workers.dev/admin` -> nhap mat khau -> dang nhap.
+Mo `https://botchathkt.tung1999zxc.workers.dev/admin` -> nhap mat khau -> dang nhap.
 
 ### Tao key
 
@@ -146,7 +157,7 @@ Key co dang: `TL_Z9EA-91M5-WGDE-9GMR`
 1. Cai extension -> bam icon -> dashboard mo ra
 2. Overlay **KICH HOAT TOOL TL_** hien len, che toan man hinh
 3. **Ma may** hien o tren - gui ma nay cho ban de tao key
-4. Nhap key (neu chua cau hinh server, them dia chi `https://<worker>.workers.dev`)
+4. Nhap key (server mac dinh da tro san ve `botchathkt`, khong can nhap dia chi)
 5. Bam **KICH HOAT NGAY** -> xac nhan -> dashboard mo binh thuong
 
 Sau khi kich hoat, o goc phai duoi co badge: `License: con 30 ngay`. Bam **Quan tri key** de doi key moi.
@@ -214,7 +225,7 @@ Mac dinh 1 may/key. Khi user go may cu vao may moi, server bao `max_devices`. Ba
 
 | Loi | Nguyen nhan | Cach sua |
 | --- | --- | --- |
-| `Khong ket noi duoc server` | Chua co dia chi server | Nhap `https://<worker>.workers.dev` o truong "Dia chi license server" |
+| `Khong ket noi duoc server` | Server khong phai hoac extension chua co `DEFAULT_SERVER_URL` | Kiem tra `https://botchathkt.tung1999zxc.workers.dev/license/ping` |
 | `Key khong ton tai` | Key sai hoac da xoa | Kiem tra lai key da cap |
 | `Key da het han` | Qua han | Gia han trong trang quan tri |
 | `Key da bi thu hoi` | Ban da thu hoi | Tao key moi |

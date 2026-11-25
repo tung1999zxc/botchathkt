@@ -18,6 +18,17 @@ try {
   console.warn("[TelegramConfig] Không nạp được telegram_config.js:", e?.message);
 }
 
+// ============================================================
+// 🔧 CAMP CORE — Lõi quét dùng chung (D + F + G)
+//    Chạy trong service worker → quét không phụ thuộc tab dashboard.
+//    Phải nạp SAU telegram_config.js (cần TelegramConfig để gửi tin).
+// ============================================================
+try {
+  importScripts("camp_core.js");
+} catch (e) {
+  console.warn("[CampCore] Không nạp được camp_core.js:", e?.message);
+}
+
 // 👉 Khi click icon extension → mở dashboard
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: "dashboard.html" });
@@ -301,6 +312,37 @@ async function invalidateExpiredPageTokens(pageIds) {
 chrome.runtime.onInstalled.addListener(() => scheduleInboxAlarm(1));
 chrome.runtime.onStartup.addListener(() => scheduleInboxAlarm(1));
 
+// ============================================================
+// 🔧 (D) CAMP CORE — ALARM QUÉT 1 PHÚT
+//    Đây là NGUỒN QUÉT DUY NHẤT cho cả bảng 📊 Bảng Chỉ Số và ✂️ Tắt Camp.
+//    Dashboard chỉ ĐỌC kết quả từ cache, không tự gọi API nữa.
+// ============================================================
+const CAMP_CORE_ALARM = "camp-core-scan";
+
+function scheduleCampCoreAlarm() {
+  try {
+    chrome.alarms.create(CAMP_CORE_ALARM, { periodInMinutes: 1 });
+  } catch (e) {
+    console.warn("[CampCore] Không tạo được alarm:", e?.message);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(() => scheduleCampCoreAlarm());
+chrome.runtime.onStartup.addListener(() => scheduleCampCoreAlarm());
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === CAMP_CORE_ALARM) {
+    if (!self.CampCore) return;
+    // (D) Alarm là NGUỒN QUÉT DUY NHẤT → luôn chạy mỗi phút để bảng 📊
+    //     "Chỉ Số" có dữ liệu mới. Việc TẮT/BẬT (F) bên trong runScan
+    //     chỉ áp dụng cho nhóm đang được giám sát (collectMonitored).
+    //     Nếu không có token/ID thì runScan tự báo lỗi và không gọi API.
+    self.CampCore.runScan().catch((error) =>
+      console.log("❌ CAMP CORE ERROR:", error?.message || error),
+    );
+  }
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === INBOX_BG_POLL_ALARM) {
     // ⚠️ KHÔNG re-schedule ở đây nữa — markTokenExpired/clearTokenExpired
@@ -367,6 +409,67 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       );
     return true;
   }
+
+  // ============================================================
+  // 🔧 CAMP CORE — API cho dashboard
+  // ============================================================
+  // 📊 Bảng Chỉ Số / ✂️ Tắt Camp: quét tay → nhờ background quét (1 nguồn duy nhất)
+  if (message?.type === "camp-core-scan") {
+    if (!self.CampCore) {
+      sendResponse({ ok: false, error: "CampCore chưa nạp" });
+      return true;
+    }
+    self.CampCore.runScan({ manual: true })
+      .then((result) => sendResponse(result))
+      .catch((error) =>
+        sendResponse({ ok: false, error: error?.message || "unknown" }),
+      );
+    return true;
+  }
+
+  // 📥 Đọc kết quả quét (rows + logs + thời điểm quét) từ cache của background
+  if (message?.type === "camp-core-get-state") {
+    if (!self.CampCore) {
+      sendResponse({ ok: false, error: "CampCore chưa nạp", data: null });
+      return true;
+    }
+    Promise.all([
+      self.CampCore.getState(),
+      self.CampCore.getCcState(),
+      self.CampCore.getAutoPauseState(),
+    ])
+      .then(([state, ccState, apState]) =>
+        sendResponse({
+          ok: true,
+          data: {
+            state,
+            ccState,
+            apState,
+            monitored: self.CampCore.collectMonitored(ccState, apState),
+          },
+        }),
+      )
+      .catch((error) =>
+        sendResponse({ ok: false, error: error?.message || "unknown" }),
+      );
+    return true;
+  }
+
+  // ♻️ Bật/tắt alarm quét (dashboard báo trạng thái giám sát)
+  if (message?.type === "camp-core-alarm") {
+    try {
+      if (message.enabled) {
+        chrome.alarms.create(CAMP_CORE_ALARM, { periodInMinutes: 1 });
+      } else {
+        chrome.alarms.clear(CAMP_CORE_ALARM);
+      }
+      sendResponse({ ok: true });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message });
+    }
+    return true;
+  }
+
   return false;
 });
 

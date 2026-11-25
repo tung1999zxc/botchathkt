@@ -41,12 +41,22 @@
     return `${y}-${m}-${day}`;
   }
 
-  /** Khoá ngày của 1 bản ghi trong danh sách đã tắt tự động */
+  /**
+   * Khoá ngày của 1 bản ghi trong danh sách đã tắt tự động.
+   *
+   * (F) ƯU TIÊN "pausedAt" — đây là thời điểm nhóm THỰC SỰ bị tắt,
+   *     luôn đúng. "dayStamp" có thể đã đóng băng từ lần ghi đầu tiên
+   *     (nếu được ghi từ camp_core_state) → dẫn tới việc nhóm vừa tắt
+   *     hôm nay bị coi là " của hôm trước" và bị xoá khỏi danh sách.
+   *
+   * Nếu bản ghi không có pausedAt → mới fallback sang dayStamp.
+   */
   function pausedDayKey(p) {
     if (!p) return "";
+    if (p.pausedAt) return dayKey(p.pausedAt);
+    // Dữ liệu cũ (chưa có pausedAt) → fallback sang dayStamp
     if (p.dayStamp) return String(p.dayStamp);
-    // Dữ liệu cũ (chưa có dayStamp) → suy ra từ pausedAt
-    return p.pausedAt ? dayKey(p.pausedAt) : "";
+    return "";
   }
 
   /* ------------------------------- Tiện ích ------------------------------ */
@@ -236,6 +246,32 @@
         window.localConfigs = {};
       }
     }
+    // (G) Nếu localStorage chưa có gì → lấy từ chrome.storage.local
+    // (background có thể đã nâng ngưỡng trước khi mở dashboard).
+    if (!Object.keys(window.localConfigs).length) {
+      try {
+        chrome?.storage?.local?.get(CONFIGS_KEY, (res) => {
+          const stored = res?.[CONFIGS_KEY];
+          if (
+            stored &&
+            typeof stored === "object" &&
+            Object.keys(stored).length
+          ) {
+            window.localConfigs = { ...window.localConfigs, ...stored };
+            try {
+              localStorage.setItem(
+                CONFIGS_KEY,
+                JSON.stringify(window.localConfigs),
+              );
+            } catch (e) {
+              /* bỏ qua */
+            }
+          }
+        });
+      } catch (e) {
+        /* bỏ qua */
+      }
+    }
     return window.localConfigs;
   }
 
@@ -257,6 +293,15 @@
       localStorage.setItem(CONFIGS_KEY, JSON.stringify(shared));
     } catch (e) {
       console.warn("Không lưu được cấu hình ngưỡng:", e);
+    }
+    // (G) Đồng bộ sang chrome.storage.local — nguồn chuẩn cho Service Worker
+    //     (SW không có localStorage nên không đọc được localStorage).
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage?.local) {
+        chrome.storage.local.set({ [CONFIGS_KEY]: shared });
+      }
+    } catch (e) {
+      console.warn("Không lưu được cấu hình ngưỡng vào storage:", e);
     }
   }
 
@@ -365,39 +410,93 @@
    * Truyền immediate = true cho các thay đổi quan trọng (bật/dừng giám sát,
    * đổi ngưỡng) để ghi ngay, tránh mất dữ liệu khi đóng tab.
    */
-  async function saveState(immediate = false) {
+  async function saveState(immediate = false, options = {}) {
     if (!immediate) {
-      scheduleSave();
+      scheduleSave(options);
       return;
     }
     clearTimeout(saveTimer);
     saveTimer = null;
-    await writeState();
+    await writeState(options);
   }
 
   /** Hẹn giờ ghi state sau SAVE_DEBOUNCE_MS */
-  function scheduleSave() {
+  function scheduleSave(options = {}) {
     if (saveTimer) return; // đã có lô đang chờ
     saveTimer = setTimeout(() => {
       saveTimer = null;
-      writeState();
+      writeState(options);
     }, SAVE_DEBOUNCE_MS);
   }
 
   /** Ghi state ngay lập tức (bỏ qua lô đang chờ) */
-  async function flushSave() {
+  async function flushSave(options = {}) {
     clearTimeout(saveTimer);
     saveTimer = null;
-    await writeState();
+    await writeState(options);
   }
 
-  async function writeState() {
+  /**
+   * (F) Hợp nhất danh sách "đã tắt tự động" giữa RAM và storage.
+   *
+   * - Nguồn chuẩn là BACKGROUND (CampCore) — nó tắt/bật nhóm.
+   * - RAM của care_camp.js có thể STALE (chưa kịp nhận "camp-core-updated").
+   * - Nếu ghi đè bằng RAM → danh sách nhóm đã bị tắt bị XOÁ MẤT →
+   *   nhóm đó không bao giờ được bật lại.
+   *
+   * Quy tắc: giữ bản ghi có "pausedAt" MỚI NHẤT cho mỗi adsetId.
+   * Bản ghi có pausedAt mới hơn (background vừa tắt) → giữ bản của background.
+   */
+  function mergeAutoPaused(ramList, storedList) {
+    const byId = new Map();
+    const push = (p) => {
+      if (!p || !p.adsetId) return;
+      const key = String(p.adsetId);
+      const cur = byId.get(key);
+      if (!cur) {
+        byId.set(key, p);
+        return;
+      }
+      const curAt = Number(cur.pausedAt || 0);
+      const newAt = Number(p.pausedAt || 0);
+      if (newAt >= curAt) byId.set(key, p);
+    };
+    (storedList || []).forEach(push);
+    (ramList || []).forEach(push);
+    return Array.from(byId.values())
+      .sort((a, b) => Number(b.pausedAt || 0) - Number(a.pausedAt || 0))
+      .slice(0, MAX_AUTO_PAUSED);
+  }
+
+  async function writeState(options = {}) {
+    // force = true → ghi đè cứng (dùng khi user xoá nhóm thủ công)
+    const force = options.force === true;
+
+    // Đọc giá trị đang có trong storage để hợp nhất (tránh mất dữ liệu
+    // do background vừa ghi trong lúc RAM chưa kịp đồng bộ).
+    let storedAutoPaused = [];
+    if (!force) {
+      try {
+        const d = await new Promise((resolve) =>
+          chrome.storage.local.get([STORAGE_KEY], (res) => resolve(res || {})),
+        );
+        const s = d?.[STORAGE_KEY];
+        if (s && Array.isArray(s.autoPaused)) storedAutoPaused = s.autoPaused;
+      } catch (e) {
+        /* bỏ qua */
+      }
+    }
+
+    const autoPaused = force
+      ? state.autoPaused.slice(0, MAX_AUTO_PAUSED)
+      : mergeAutoPaused(state.autoPaused, storedAutoPaused);
+
     await new Promise((r) =>
       chrome.storage.local.set(
         {
           [STORAGE_KEY]: {
             monitored: state.monitored,
-            autoPaused: state.autoPaused.slice(0, MAX_AUTO_PAUSED),
+            autoPaused,
             logs: pruneLogs(state.logs),
             running: state.running,
             autoScan: state.autoScan,
@@ -408,6 +507,8 @@
         r,
       ),
     );
+    // Đồng bộ ngược RAM với kết quả hợp nhất (để UI khớp storage)
+    state.autoPaused = autoPaused;
   }
 
   async function loadState() {
@@ -1105,8 +1206,44 @@
     btn.innerText = "⏳ Đang tải...";
     $("ccLoading").style.display = "block";
     try {
-      const rows = await fetchAdsets(token, ids);
+      // ⚠️ (D) NGUỒN QUÉT DUY NHẤT = background.
+      //    Nhờ background quét rồi đọc cache → không gọi API trùng lần nữa.
+      try {
+        await new Promise((resolve) => {
+          chrome.runtime?.sendMessage?.(
+            { type: "camp-core-scan", manual: true },
+            (resp) => {
+              void chrome.runtime?.lastError;
+              resolve(resp || null);
+            },
+          );
+        });
+      } catch (e) {
+        console.warn("[CARE CAMP] Không gọi được background:", e?.message);
+      }
+
+      // Ưu tiên cache từ background
+      const core = await readCoreState();
+      let rows = core?.state?.rows;
+      if (!rows || !rows.length) {
+        // Fallback: không có background → gọi trực tiếp
+        rows = await fetchAdsets(token, ids);
+      }
       state.rows = rows;
+
+      // ── (F) Đồng bộ nguồn quyết định tắt/bật từ background ──
+      if (core?.ccState) {
+        if (Array.isArray(core.ccState.autoPaused)) {
+          state.autoPaused = core.ccState.autoPaused.slice(
+            0,
+            MAX_AUTO_PAUSED,
+          );
+        }
+        if (Array.isArray(core.ccState.monitored)) {
+          state.monitored = core.ccState.monitored;
+        }
+      }
+
       const errs = rows.filter((r) => r.error);
       renderAll();
       if (errs.length) {
@@ -1175,6 +1312,7 @@
     renderAll();
     startTimer();
     toast(`🚀 Đang giám sát ${list.length} nhóm.`, "ok");
+    // (D) Quét sẽ do background thực hiện qua alarm 1 phút
     doScan(true);
   }
 
@@ -1203,18 +1341,22 @@
    * dashboard.js → mỗi lần KQ tăng chỉ nâng ngưỡng ĐÚNG 1 LẦN, không nhân đôi
    * khi cả bảng Chỉ Số và bảng Tắt Camp cùng quét.
    */
-  function raiseThresholds(rows) {
+  async function raiseThresholds(rows) {
     if (typeof window.raiseThresholdForAdset !== "function") return false;
     let changed = false;
 
     for (const row of rows.filter((r) => !r.error)) {
       const g = state.settings;
-      const res = window.raiseThresholdForAdset(row.adsetId, row.resultCount || 0, {
-        maxSpend: g.maxSpend,
-        maxPrice: g.maxPrice,
-        maxCpm: g.maxCpm,
-        maxCpc: g.maxCpc,
-      });
+      const res = await window.raiseThresholdForAdset(
+        row.adsetId,
+        row.resultCount || 0,
+        {
+          maxSpend: g.maxSpend,
+          maxPrice: g.maxPrice,
+          maxCpm: g.maxCpm,
+          maxCpc: g.maxCpc,
+        },
+      );
       if (res?.raised) {
         changed = true;
         console.log(
@@ -1227,6 +1369,26 @@
       window.careCampRefreshThresholds();
     }
     return changed;
+  }
+
+  /* ------------------ Đọc cache từ background (D) ------------------
+   * Kết quả quét do background (camp_core.js) ghi vào
+   * chrome.storage.local["camp_core_state"]. Bảng này chỉ đọc lại.
+   * ------------------------------------------------------------------ */
+  function readCoreState() {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime?.sendMessage?.(
+          { type: "camp-core-get-state" },
+          (resp) => {
+            void chrome.runtime?.lastError;
+            resolve(resp?.data || null);
+          },
+        );
+      } catch (e) {
+        resolve(null);
+      }
+    });
   }
 
   /**
@@ -1242,7 +1404,14 @@
     return state.monitored.length > 0 || state.autoPaused.length > 0;
   }
 
-  /** Quét & tự động tắt/bật lại nhóm vượt ngưỡng */
+  /** Quét & tự động tắt/bật lại nhóm vượt ngưỡng
+   *
+   * ⚠️ (D + F) LƯU Ý KIẾN TRÚC MỚI:
+   *    - Quét API thật do BACKGROUND thực hiện (chrome.alarms "camp-core-scan").
+   *    - Việc TẮT / BẬT nhóm cũng do background thực hiện → 1 nguồn quyết định
+   *      duy nhất, không có hiện tượng 2 bảng cùng POST status cho 1 nhóm.
+   *    - Hàm này chỉ gửi yêu cầu quét + đọc lại cache để render bảng.
+   * ------------------------------------------------------------------ */
   async function doScan(silent = false) {
     const token = getToken();
     const ids = getAccountIds();
@@ -1250,6 +1419,78 @@
       if (!silent) toast("❌ Thiếu token hoặc ID tài khoản.", "err");
       return;
     }
+
+    // --- (D) Nhờ background quét (nguồn quét duy nhất) ---
+    try {
+      await new Promise((resolve) => {
+        chrome.runtime?.sendMessage?.(
+          { type: "camp-core-scan", manual: true },
+          (resp) => {
+            void chrome.runtime?.lastError;
+            resolve(resp || null);
+          },
+        );
+      });
+    } catch (e) {
+      console.warn("[CARE CAMP] Không gọi được background:", e?.message);
+    }
+
+    // --- Đọc lại kết quả từ cache ---
+    const core = await readCoreState();
+    if (core?.state?.rows) {
+      state.rows = core.state.rows;
+      if (core.state.logs?.length) {
+        // Gộp log của background vào log của bảng (giữ tối đa MAX_LOGS)
+        state.logs = core.state.logs.slice(0, MAX_LOGS);
+      }
+      state.nextScanAt = core.state.nextScanAt || Date.now() + SCAN_INTERVAL_MS;
+
+      // ── (F) Đồng bộ nguồn quyết định tắt/bật từ background ──
+      //   (giống listener "camp-core-updated")
+      if (core.ccState) {
+        if (Array.isArray(core.ccState.autoPaused)) {
+          state.autoPaused = core.ccState.autoPaused.slice(
+            0,
+            MAX_AUTO_PAUSED,
+          );
+        }
+        if (Array.isArray(core.ccState.monitored)) {
+          state.monitored = core.ccState.monitored;
+        }
+        if (core.ccState.settings) {
+          state.settings = Object.assign(
+            {},
+            state.settings,
+            core.ccState.settings,
+          );
+        }
+      }
+
+      renderAll();
+      if (!silent) {
+        toast(
+          `✅ Quét xong — ${core.state.paused || 0} nhóm tắt, ${core.state.resumed || 0} nhóm bật lại.`,
+          "ok",
+        );
+      }
+      return;
+    }
+
+    // --- (F) KHÔNG có fallback cục bộ khi CampCore đã nạp ---
+    //     Nếu tới được đây mà CampCore tồn tại → nghĩa là background chưa
+    //     có dữ liệu (lần quét đầu / lỗi token). KHÔNG tự quét & KHÔNG tự
+    //     tắt ở đây, vì sẽ thành 2 nguồn quyết định (vi phạm nguyên tắc F).
+    if (window.CampCore) {
+      if (!silent) {
+        toast(
+          "ℹ️ Chưa có dữ liệu quét từ background — sẽ có sau khi background quét xong.",
+          "info",
+        );
+      }
+      return;
+    }
+
+    // --- Fallback: KHÔNG có CampCore (chưa nạp được) → quét cục bộ ---
 
     // ⚡ CHỈ QUÉT KHI THỰC SỰ CÓ NHÓM ĐANG GIÁM SÁT
     //    Không có nhóm theo dõi VÀ không có nhóm đã tắt tự động → bỏ qua
@@ -1287,7 +1528,7 @@
       // 0. NÂNG NGƯỠNG TỰ ĐỘNG (dùng chung localConfigs với bảng Chỉ Số)
       //    Khi số kết quả (hội thoại inbox / click / CPR) tăng so với lần quét
       //    trước → maxSpend += maxPrice * (số KQ tăng thêm).
-      raiseThresholds(rows);
+      await raiseThresholds(rows);
 
       // 1. Tắt nhóm đang giám sát vượt ngưỡng
       //    Bỏ qua nhóm thuộc chiến dịch đã tắt (không thể tắt con của chiến dịch tắt)
@@ -1405,12 +1646,14 @@
           baseLim.maxSpend + baseLim.maxPrice * newResults,
           sharedMaxSpend,
         );
-        // Điều kiện bật lại:
+        // (F) ĐIỀU KIỆN BẬT LẠI — KHÔNG DÙNG CPM (khớp với camp_core.js)
+        //   CPM chỉ dùng để TẮT nhóm, KHÔNG dùng để BẬT LẠI:
+        //   CPM tụt xuống chỉ vì ngừng chi tiêu, không có nghĩa
+        //   nhóm đã chạy lại được tốt hơn.
         //   - priceOk: đã có KQ mới và giá mới <= ngưỡng giá
-        //   - cpmOk  : CPM đã tụt xuống dưới ngưỡng CPM
         //   - spendOk: tổng chi tiêu <= ngưỡng tiêu MỚI (đã nâng theo KQ mới)
+        //   - cpcOk  : CPC <= ngưỡng CPC (chỉ ở chế độ Kết hợp CPC)
         const priceOk = newResults > 0 && newPrice <= baseLim.maxPrice;
-        const cpmOk = row.cpm <= baseLim.maxCpm;
         const spendOk = row.spend <= newMaxSpend;
 
         if (state.settings.useCpcCombo) {
@@ -1419,13 +1662,12 @@
           const cpcOk =
             row.cpcNum > 0 && row.cpcNum <= baseLim.maxCpc;
           // Bật lại khi: CPC đã về ngưỡng VÀ đã có KQ mới với giá <= ngưỡng
-          //   VÀ CPM <= ngưỡng VÀ chi tiêu <= ngưỡng tiêu MỚI
-          const canResume =
-            cpcOk && priceOk && cpmOk && spendOk;
+          //   VÀ chi tiêu <= ngưỡng tiêu MỚI
+          const canResume = cpcOk && priceOk && spendOk;
           if (!canResume) continue;
         } else {
-          // Hành vi cũ: chỉ cần 1 trong các điều kiện đạt là bật lại (OR)
-          if (!(priceOk || cpmOk || spendOk)) continue;
+          // Chỉ cần 1 trong các điều kiện đạt là bật lại (OR)
+          if (!(priceOk || spendOk)) continue;
         }
 
         const res = await setAdsetStatus(token, p.adsetId, "ACTIVE");
@@ -1483,11 +1725,15 @@
             state.running = true;
             startTimer();
           }
+          // (F) Lý do bật lại (KHÔNG dùng CPM — CPM chỉ dùng để TẮT nhóm)
+          const resumeReason = priceOk
+            ? `có KQ mới (${money(newResults)}) với giá ${money(newPrice)} đ <= ngưỡng ${money(baseLim.maxPrice)} đ`
+            : `tổng chi tiêu ${money(row.spend)} đ <= ngưỡng tiêu ${money(newMaxSpend)} đ`;
           pushLog(
             "auto_resume",
             p.name,
             p.campaignName,
-            `Đã bật lại — chỉ số đã trở lại trong ngưỡng (giá mới ${money(newPrice)} đ, CPM ${money(Math.floor(row.cpm))} đ). ` +
+            `Đã bật lại — ${resumeReason}. ` +
               `Nâng ngưỡng tiêu ${money(baseLim.maxSpend)} đ → ${money(newMaxSpend)} đ (+${newResults} KQ mới). Đã thêm lại vào bảng giám sát.`,
           );
           // 🔔 Báo về Telegram: đã tự động bật lại nhóm
@@ -1499,7 +1745,7 @@
               `- KQ mới: ${money(newResults)}\n` +
               `- Giá mới: ${money(newPrice)} đ (ngưỡng ${money(baseLim.maxPrice)} đ)\n` +
               `- CPC: ${money(row.cpcNum)} đ (ngưỡng ${money(baseLim.maxCpc)} đ)\n` +
-              `- CPM: ${money(Math.floor(row.cpm))} đ (ngưỡng ${money(baseLim.maxCpm)} đ)\n` +
+              `- Lý do bật lại: ${resumeReason}\n` +
               `- Ngưỡng tiêu: ${money(baseLim.maxSpend)} đ → <b>${money(newMaxSpend)} đ</b>\n` +
               `- Trạng thái: <b>Đã bật lại</b> & đã thêm vào bảng giám sát`,
           );
@@ -1568,7 +1814,8 @@
             `- Nhóm: ${tgEsc(p?.name || adsetId)}\n` +
             `- Trạng thái: <b>Đã bật lại</b>`,
         );
-        await saveState(true);
+        // force: true → nhóm đã bật lại thì không được merge lại vào danh sách
+        await saveState(true, { force: true });
         renderAll();
         toast(
           `✅ Đã bật lại nhóm "${p?.name || adsetId}". Nhóm sẽ hiện lại ở bảng nhóm đang bật.`,
@@ -1693,7 +1940,8 @@
       p.campaignName,
       "Đã xoá khỏi danh sách nhóm tắt tự động (nhóm vẫn đang tắt trên Facebook)",
     );
-    await saveState(true);
+    // force: true → ghi đè cứng (không merge lại nhóm vừa xoá)
+    await saveState(true, { force: true });
     renderAll();
     toast(`🗑️ Đã xoá "${p.name || adsetId}" khỏi danh sách tắt tự động.`, "ok");
   }
@@ -1713,7 +1961,8 @@
     if (!ok) return;
     state.autoPaused = [];
     pushLog("info", "-", "", `Đã xoá toàn bộ ${n} nhóm khỏi danh sách tắt tự động`);
-    await saveState(true);
+    // force: true → xoá hẳn, không merge lại từ storage
+    await saveState(true, { force: true });
     renderAll();
     toast(`🗑️ Đã xoá ${n} nhóm khỏi danh sách tắt tự động.`, "ok");
   }
@@ -1781,17 +2030,27 @@
     state.cdTimer = null;
   }
 
-  /* ------------------------------ Timer quét ------------------------------ */
+  /* ------------------------------ Timer quét ------------------------------
+   * ⚠️ (D) KHÔNG quét cục bộ nữa!
+   *    Lần quét 1 phút chạy ở BACKGROUND (chrome.alarms "camp-core-scan")
+   *    → 1 nguồn quét duy nhất cho cả bảng 📊 và bảng ✂️.
+   *    Bảng này chỉ:
+   *      1. Yêu cầu background quét (khi bấm nút) — vẫn 1 nguồn.
+   *      2. Đọc rows từ cache và render lại.
+   *      3. Lắng nghe "camp-core-updated" để tự làm mới.
+   * -------------------------------------------------------------------- */
   function startTimer() {
     stopTimer();
     state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
-    state.timer = setInterval(() => {
-      if (!state.running || !state.autoScan) return;
-      state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
-      // ⚡ Không có nhóm nào cần theo dõi → bỏ qua, không gọi API
-      if (!hasMonitoredWork()) return;
-      doScan(true);
-    }, SCAN_INTERVAL_MS);
+    // Bật alarm phía background (idempotent)
+    try {
+      chrome.runtime?.sendMessage?.(
+        { type: "camp-core-alarm", enabled: true },
+        () => void chrome.runtime?.lastError,
+      );
+    } catch (e) {
+      /* bỏ qua */
+    }
     startCountdownTicker();
   }
   function stopTimer() {
@@ -2009,6 +2268,91 @@
     if (state.running) state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
     renderAll();
     if (state.running) startTimer();
+
+    // ============================================================
+    // (D) Lắng nghe background báo "có dữ liệu mới" → render lại bảng.
+    //     Bảng này KHÔNG tự gọi API ở đây.
+    // ============================================================
+    try {
+      chrome.runtime?.onMessage?.addListener((msg) => {
+        if (msg?.type === "camp-core-updated") {
+          // (G) Đồng bộ ngưỡng từ nguồn chuẩn (storage) — background
+          //     có thể vừa nâng ngưỡng trong lúc quét.
+          try {
+            chrome?.storage?.local?.get(CONFIGS_KEY, (res) => {
+              const stored = res?.[CONFIGS_KEY];
+              if (
+                stored &&
+                typeof stored === "object" &&
+                Object.keys(stored).length
+              ) {
+                window.localConfigs = { ...(window.localConfigs || {}), ...stored };
+                try {
+                  localStorage.setItem(
+                    CONFIGS_KEY,
+                    JSON.stringify(window.localConfigs),
+                  );
+                } catch (e) {
+                  /* bỏ qua */
+                }
+                if (typeof window.careCampRefreshThresholds === "function") {
+                  window.careCampRefreshThresholds();
+                }
+              }
+            });
+          } catch (e) {
+            /* bỏ qua */
+          }
+          readCoreState()
+            .then((core) => {
+              if (!core?.state) return;
+              if (Array.isArray(core.state.rows)) {
+                state.rows = core.state.rows;
+              }
+              if (Array.isArray(core.state.logs) && core.state.logs.length) {
+                state.logs = core.state.logs.slice(0, MAX_LOGS);
+              }
+              state.nextScanAt =
+                core.state.nextScanAt || Date.now() + SCAN_INTERVAL_MS;
+
+              // ── (F) ĐỒNG BỘ NGUỒN QUYẾT ĐỊNH TẮT/BẬT ──────────────
+              //   cc_camp_state là nguồn sự thật duy nhất do background
+              //   (CampCore) ghi. Phải đồng bộ cả 2 danh sách, nếu không
+              //   bảng "🛑 NHÓM ĐÃ TẮT TỰ ĐỘNG" sẽ không nhảy dù
+              //   background đã tắt/bật nhóm và đã gửi Telegram.
+              if (core.ccState) {
+                if (Array.isArray(core.ccState.autoPaused)) {
+                  state.autoPaused = core.ccState.autoPaused.slice(
+                    0,
+                    MAX_AUTO_PAUSED,
+                  );
+                }
+                if (Array.isArray(core.ccState.monitored)) {
+                  state.monitored = core.ccState.monitored;
+                }
+                if (core.ccState.settings) {
+                  state.settings = Object.assign(
+                    {},
+                    state.settings,
+                    core.ccState.settings,
+                  );
+                }
+                if (core.ccState.running !== undefined) {
+                  state.running = !!core.ccState.running;
+                }
+                if (core.ccState.autoScan !== undefined) {
+                  state.autoScan = core.ccState.autoScan !== false;
+                }
+              }
+
+              renderAll();
+            })
+            .catch(() => {});
+        }
+      });
+    } catch (e) {
+      /* bỏ qua */
+    }
 
     // Ghi nốt lô đang chờ khi người dùng đóng tab / chuyển tab
     // (debounce 3 phút có thể chưa tới hạn → ghi ngay để không mất dữ liệu)

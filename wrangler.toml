@@ -1,0 +1,44 @@
+# ==========================================================================
+# Cloudflare Worker - Ads Manager Pro TL_ (FB Token Swap + License Server)
+# --------------------------------------------------------------------------
+# File nay cho Wrangler biet:
+#   - Entry point la file worker.js
+#   - Worker ten "license-kv" (phai trung voi ten Worker tren Cloudflare)
+#   - Binding KV Namespace cho he thong license key
+#
+# Deploy: npx wrangler deploy  (hoac Cloudflare Workers Builds tu dong)
+# ==========================================================================
+
+name = "license-kv"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# --------------------------------------------------------------------------
+# KV Namespace - luu du lieu key ban quyen
+# --------------------------------------------------------------------------
+# Cach lay KV Namespace ID:
+#   Cloudflare Dashboard > Storage & Databases > KV > chon namespace "license-kv"
+#   > Settings > copy o "KV Namespace ID"
+#   (La chuoi 32 ky tu hex, KHONG phai ten namespace)
+#
+# LUU Y: TEN BINDING phai dung chinh xac la "LICENSE_KV"
+#         vi code doc dung env.LICENSE_KV
+# --------------------------------------------------------------------------
+[[kv_namespaces]]
+binding = "LICENSE_KV"
+id = "0568ad83a0b74ab094d69bcc20b2f610"
+
+# --------------------------------------------------------------------------
+# Bien moi truong (Secret/Variable)
+# --------------------------------------------------------------------------
+# Nhung bien nay nen dat trong Cloudflare Dashboard:
+#   Workers & Pages > license-kv > Settings > Variables and Secrets
+#
+#   ADMIN_PASSWORD  (Secret)  - mat khau trang quan tri key
+#   FB_APP_ID       (Text)    - App ID Facebook
+#   FB_APP_SECRET   (Secret)  - App Secret Facebook
+#   REDIRECT_URI    (Text)    - https://license-kv.<ten-cua-ban>.workers.dev/callback
+#   EXT_ORIGIN      (Text)    - chrome-extension://<EXTENSION_ID>
+#
+# KHONG dat secret trong file nay - Wrangler se commit len git.
+# --------------------------------------------------------------------------

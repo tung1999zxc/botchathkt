@@ -1,0 +1,14 @@
+{
+  "name": "license-kv",
+  "version": "10.0",
+  "private": true,
+  "description": "Ads Manager Pro TL_ - FB Token Swap + License Server",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.168.0"
+  }
+}

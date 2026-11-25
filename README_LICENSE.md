@@ -33,7 +33,10 @@ Nguoi dung mo extension
 
 1. Vao https://dash.cloudflare.com
 2. Menu **Storage & Databases** > **KV** > **Create Instance**
-3. Ten: `license-kv` (bat ky) > **Add**
+3. Ten: `license-kv` > **Add**
+4. Mo namespace vua tao > **Settings** > copy **KV Namespace ID** (chuoi 32 ky tu hex)
+   - Neu ban da tao san `license-kv` thi lay ID cua namespace do
+   - ID hien tai cua repo: xem trong `wrangler.toml`
 
 ### Buoc 2: Gan bien moi truong cho Worker
 
@@ -57,9 +60,40 @@ Vao **Settings** > **Variables and Secrets** > **Add**:
 
 ### Buoc 3: Deploy
 
-1. Worker > **Edit Code** > xoa het > paste noi dung `worker.js` > **Save and Deploy**
-2. Mo trinh duyet, vao `https://<worker>.workers.dev/license/ping`
-3. Phai tra JSON: `{"ok":true,"service":"license-server","hasKv":true,"hasAdmin":true}`
+Repo da co san `wrangler.toml` + `package.json` + `.github/workflows/deploy.yml`.
+
+**Cach A - GitHub Actions (khuyen nghi, ban dang dung cach nay)**
+
+1. GitHub > **Settings** > **Secrets and variables** > **Actions** > **New repository secret**
+2. Tao 2 secret:
+   - `CLOUDFLARE_API_TOKEN` — Cloudflare API Token
+   - `CLOUDFLARE_ACCOUNT_ID` — Account ID cua ban
+3. Push code len `main` -> GitHub Actions tu dong deploy
+
+**Lay API Token:**
+Cloudflare Dashboard > My Profile > **API Tokens** > **Create Token** > chon template **Edit Cloudflare Workers** > Account Resources chon account cua ban > Client IP giu trong `0.0.0.0/0` > **Create Token** > copy.
+
+**Lay Account ID:**
+Cloudflare Dashboard > **Workers & Pages** > `license-kv` > **Settings** > **Account ID**.
+
+**Cach B - Cloudflare Workers Builds (tu dong theo git)**
+
+Cloudflare Dashboard > Workers & Pages > `license-kv` > **Settings** > **Builds** > **Connect to Git** > chon repo > branch `main`.
+> Cach nay can `wrangler.toml` co dung `name` va `main`. Cach A it rui ro hon vi ban tu control.
+
+**Cach C - Cai dat truc tiep tren may**
+
+```bash
+npm install
+npx wrangler login
+npx wrangler deploy
+```
+
+**Kiem tra sau khi deploy:**
+```
+https://license-kv.<ten-cua-ban>.workers.dev/license/ping
+```
+Phai tra JSON: `{"ok":true,"service":"license-server","hasKv":true,"hasAdmin":true}`
 
 Neu `hasKv` hoac `hasAdmin` la `false` -> quay lai Buoc 2.
 

@@ -169,13 +169,13 @@ Sau khi kich hoat, o goc phai duoi co badge: `License: con 30 ngay`. Bam **Quan 
 Chay test truc tiep tren may ban:
 
 ```bash
-node _test_license.js
+node test_license.js
 ```
 
 Kiem tra Worker + license API + trang admin (42 assertions).
 
 ```bash
-node _test_core.js
+node test_core.js
 ```
 
 Kiem tra module phia client tren trinh duyet gia lap (30 assertions).

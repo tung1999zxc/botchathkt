@@ -19,6 +19,38 @@ try {
 }
 
 // ============================================================
+// 🔐 LICENSE CORE — kiểm tra key bản quyền (dùng chung với dashboard)
+//    Nạp SAU telegram_config.js, trước camp_core.js.
+// ============================================================
+try {
+  importScripts("license_core.js");
+} catch (e) {
+  console.warn("[LicenseCore] Không nạp được license_core.js:", e?.message);
+}
+
+// ============================================================
+// 🔐 GATE LICENSE — chặn các tác vụ nền khi chưa kích hoạt
+//    - Kiểm tra license tối đa 1 lần / 5 phút (cache trong bộ nhớ)
+//    - Fail-open: lỗi mạng → cho chạy tiếp (không khoá người dùng)
+// ============================================================
+let _licGateCache = { ok: false, at: 0 };
+const LIC_GATE_TTL = 5 * 60 * 1000;
+
+async function isLicenseValid() {
+  if (!self.LicenseCore) return true; // không nạp được thì bỏ qua (không chặn oan)
+  const now = Date.now();
+  if (now - _licGateCache.at < LIC_GATE_TTL) return _licGateCache.ok;
+  try {
+    const res = await self.LicenseCore.check();
+    _licGateCache = { ok: !!res.allowed, at: now };
+    return _licGateCache.ok;
+  } catch (e) {
+    // lỗi nội bộ → fail-open
+    return true;
+  }
+}
+
+// ============================================================
 // 🔧 CAMP CORE — Lõi quét dùng chung (D + F + G)
 //    Chạy trong service worker → quét không phụ thuộc tab dashboard.
 //    Phải nạp SAU telegram_config.js (cần TelegramConfig để gửi tin).
@@ -337,24 +369,59 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     //     "Chỉ Số" có dữ liệu mới. Việc TẮT/BẬT (F) bên trong runScan
     //     chỉ áp dụng cho nhóm đang được giám sát (collectMonitored).
     //     Nếu không có token/ID thì runScan tự báo lỗi và không gọi API.
-    self.CampCore.runScan().catch((error) =>
-      console.log("❌ CAMP CORE ERROR:", error?.message || error),
-    );
+    // 🔐 GATE LICENSE: chưa kích hoạt → không quét, không tốn API
+    isLicenseValid().then((ok) => {
+      if (!ok) {
+        console.log("🔐 Chưa kích hoạt license → bỏ qua lần quét CampCore");
+        return;
+      }
+      self.CampCore.runScan().catch((error) =>
+        console.log("❌ CAMP CORE ERROR:", error?.message || error),
+      );
+    });
   }
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === INBOX_BG_POLL_ALARM) {
-    // ⚠️ KHÔNG re-schedule ở đây nữa — markTokenExpired/clearTokenExpired
-    // tự điều chỉnh chu kỳ theo trạng thái backoff.
-    inboxBackgroundPoll()
-      .then(() => updateBadgeFromCache())
-      .catch((error) => console.log("❌ INBOX BG ERROR:", error?.message));
+    // 🔐 GATE LICENSE: chưa kích hoạt → không poll inbox
+    isLicenseValid().then((ok) => {
+      if (!ok) {
+        console.log("🔐 Chưa kích hoạt license → bỏ qua poll inbox");
+        return;
+      }
+      // ⚠️ KHÔNG re-schedule ở đây nữa — markTokenExpired/clearTokenExpired
+      // tự điều chỉnh chu kỳ theo trạng thái backoff.
+      inboxBackgroundPoll()
+        .then(() => updateBadgeFromCache())
+        .catch((error) => console.log("❌ INBOX BG ERROR:", error?.message));
+    });
   }
 });
 
 // Dashboard chủ động đánh thức SW + poll ngay
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // 🔐 LICENSE: dashboard hỏi trạng thái license
+  if (message?.type === "license-status") {
+    if (!self.LicenseCore) {
+      sendResponse({ ok: false, allowed: true, state: "unknown" });
+      return true;
+    }
+    self.LicenseCore.check()
+      .then((res) =>
+        sendResponse({
+          ok: true,
+          allowed: !!res.allowed,
+          state: res.state,
+          message: res.message,
+          expiresAt: res.license?.expiresAt || 0,
+        }),
+      )
+      .catch((error) =>
+        sendResponse({ ok: false, allowed: true, error: error?.message }),
+      );
+    return true;
+  }
   if (message?.type === "inbox-poll-now") {
     // ⚠️ Nếu token đang hết hạn + đang backoff → bỏ qua, tránh dashboard
     //    spam API Meta mỗi lần refresh (bypass được backoff của alarm)

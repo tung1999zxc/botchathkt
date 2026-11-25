@@ -39,7 +39,7 @@
 
   // ---- Server mac dinh (duoc ghi de bang UI quan tri) ----
   // De trong => dung workerUrl da luu san trong chrome.storage.local
-  const DEFAULT_SERVER_URL = "";
+  const DEFAULT_SERVER_URL = "https://botchathkt.tung1999zxc.workers.dev";
 
   /* ---------------------------------------------------------
    * TIEN ICH

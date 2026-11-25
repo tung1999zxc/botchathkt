@@ -23,6 +23,18 @@
 
 const FB_GRAPH = "https://graph.facebook.com/v25.0";
 
+/* =========================================================================
+ * KHOA CONG XAC MINH CHU KY (ECDSA P-256)
+ * -------------------------------------------------------------------------
+ * Khoa RIENG nam trong Worker Secret "LICENSE_PRIVATE_KEY" (KHONG bao gio
+ * dua vao code hay repo). Khoa CONG ben duoi duoc nhung san vao extension
+ * de xac minh chu ky - khong the bi gia mao.
+ *
+ * Sinh cap khoa moi: node _gen_keys.js
+ * ========================================================================= */
+const LICENSE_PUBLIC_KEY_B64 =
+  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERpl81Sw2CQnsbqdVwWg4ucmVz4WSn/H4Zheo9VkvDbJrcK/xU3Te3gW7bm5mvclkpSOr1wQl6gfc/TbBhcMcng==";
+
 const HTML_ESC = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;",
@@ -221,9 +233,95 @@ async function sha256Hex(text) {
   return out;
 }
 
+/* =========================================================================
+ * CHU KY SO (ECDSA P-256) - Uu tien 1
+ * -------------------------------------------------------------------------
+ * Y EU:
+ *   Server KY payload license bang khoa RIENG (Secret).
+ *   Extension XAC MINH bang khoa CONG (public key) nhung san trong code.
+ *
+ * YEU CAU: Client KHONG THE tu gia mao du lieu license trong storage,
+ *           vi du lieu do bat buoc phai co chu ky hop le cua server.
+ *
+ * SECRET:  LICENSE_PRIVATE_KEY  (PKCS8, base64)  -> Worker Secret
+ * PUBLIC:  LICENSE_PUBLIC_KEY   (SPKI,  base64)  -> nhung vao license_core.js
+ * ========================================================================= */
+
+// Cache khoa private da import (tranh import lai moi lan)
+let _privKeyCache = null;
+
+function b64ToBytes(b64) {
+  const bin = atob(String(b64 || "").trim());
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function bytesToB64(bytes) {
+  let bin = "";
+  const arr = new Uint8Array(bytes);
+  for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+  return btoa(bin);
+}
+
+async function getPrivateKey(env) {
+  if (_privKeyCache) return _privKeyCache;
+  const b64 = env.LICENSE_PRIVATE_KEY;
+  if (!b64) return null;
+  try {
+    const key = await crypto.subtle.importKey(
+      "pkcs8",
+      b64ToBytes(b64),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign"],
+    );
+    _privKeyCache = key;
+    return key;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Tao payload chuan hoa de ky.
+ * Thu tu truong PHAI co dinh (client dung cung thu tu).
+ */
+function buildSignedPayload(data) {
+  return JSON.stringify({
+    key: data.key,
+    deviceId: data.deviceId,
+    plan: data.plan,
+    expiresAt: data.expiresAt,
+    status: data.status,
+    maxDevices: data.maxDevices,
+    issuedAt: data.issuedAt,
+    nonce: data.nonce,
+  });
+}
+
+/**
+ * Ky payload. Tra null neu khong co khoa private (server chua cau hinh).
+ * @returns {Promise<string|null>} chu ky base64
+ */
+async function signLicensePayload(env, data) {
+  const key = await getPrivateKey(env);
+  if (!key) return null;
+  try {
+    const payload = buildSignedPayload(data);
+    const sig = await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      new TextEncoder().encode(payload),
+    );
+    return bytesToB64(sig);
+  } catch (e) {
+    return null;
+  }
+}
+
 // Crockford Base32 (bo I, L, O, U de tranh nham 1/0)
 const B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-
 function randomKey() {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
@@ -568,6 +666,9 @@ async function handleLicenseActivate(request, env, origin) {
 
   await kvPut(env, "key:" + check.hash, record);
 
+  // === CHU KY SO (Uu tien 1) ===
+  const signed = await buildSignedData(env, key, deviceId, record);
+
   return jsonResponse(
     {
       ok: true,
@@ -576,6 +677,10 @@ async function handleLicenseActivate(request, env, origin) {
       plan: record.plan,
       maxDevices: record.maxDevices || 1,
       serverTime: Date.now(),
+      // Du lieu co chu ky
+      payload: signed.payload,
+      signature: signed.signature,
+      keyId: signed.keyId,
     },
     200,
     origin,
@@ -627,6 +732,9 @@ async function handleLicenseVerify(request, env, origin) {
   record.lastSeen = Date.now();
   await kvPut(env, "key:" + check.hash, record);
 
+  // === CHU KY SO (Uu tien 1) ===
+  const signed = await buildSignedData(env, key, deviceId, record);
+
   return jsonResponse(
     {
       ok: true,
@@ -635,10 +743,59 @@ async function handleLicenseVerify(request, env, origin) {
       plan: record.plan,
       maxDevices: record.maxDevices || 1,
       serverTime: Date.now(),
+      payload: signed.payload,
+      signature: signed.signature,
+      keyId: signed.keyId,
     },
     200,
     origin,
   );
+}
+
+/* =========================================================================
+ * BUILD + KY DU LIEU LICENSE
+ * ========================================================================= */
+
+/**
+ * Tao payload (chuoi JSON) + chu ky cho mot license.
+ * @returns {Promise<{payload:string, signature:string|null, keyId:string|null}>}
+ */
+async function buildSignedData(env, key, deviceId, record) {
+  const data = {
+    key: key,
+    deviceId: deviceId,
+    plan: record.plan,
+    expiresAt: record.expiresAt || 0,
+    status: "active",
+    maxDevices: record.maxDevices || 1,
+    issuedAt: Date.now(),
+    nonce: crypto.randomUUID(),
+  };
+
+  const payload = buildSignedPayload(data);
+  const signature = await signLicensePayload(env, data);
+  const keyId = signature ? await licenseKeyId() : null;
+
+  return { payload: payload, signature: signature, keyId: keyId };
+}
+
+/**
+ * Kiem tra server da duoc cau hinh khoa chu ky chua.
+ * @returns {Promise<boolean>}
+ */
+async function hasSigningKey(env) {
+  return !!(await getPrivateKey(env));
+}
+
+/**
+ * Fingerprint cua khoa public (dung de client nhan biet key nao).
+ * @returns {Promise<string>}
+ */
+async function licenseKeyId() {
+  const pub = typeof LICENSE_PUBLIC_KEY_B64 !== "undefined" ? LICENSE_PUBLIC_KEY_B64 : "";
+  if (!pub) return "";
+  const h = await sha256Hex(pub);
+  return h.slice(0, 16);
 }
 
 /* =========================================================================
@@ -657,6 +814,9 @@ async function routeLicense(request, env, url, origin) {
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
   // ===== GET /license/ping =====
+  // Dung de phan biet:
+  //   - Server SONG (ping OK) nhung /verify bi chan  => fail-CLOSED
+  //   - Server CHET (ping fail)                     => fail-OPEN (offline grace)
   if (path === "/license/ping") {
     return jsonResponse(
       {
@@ -665,6 +825,7 @@ async function routeLicense(request, env, url, origin) {
         time: Date.now(),
         hasKv: !!env.LICENSE_KV,
         hasAdmin: !!env.ADMIN_PASSWORD,
+        hasSigning: !!(await getPrivateKey(env)),
       },
       200,
       origin,

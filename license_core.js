@@ -5,16 +5,28 @@
  *   1. Sinh "ma may" (deviceId) on dinh tu fingerprint may tinh.
  *   2. Luu/truy xuat license trong chrome.storage.local.
  *   3. Goi server kich hoat (/license/activate) va xac minh (/license/verify).
- *   4. Tinh trang: valid | expired | revoked | none | invalid
+ *   4. Tinh trang: valid | expired | revoked | none | invalid | tampered
+ *
+ * BAO MAT (Uu tien 1 + 2)
+ *   [1] CHU KY SO ECDSA P-256:
+ *       Server ky payload license bang khoa RIENG (Worker Secret).
+ *       Client xac minh bang khoa CONG nhung san trong file nay.
+ *       => Khong the gia mao du lieu license trong chrome.storage.local
+ *          (chi co server moi tao duoc chu ky hop le).
+ *
+ *   [2] PING KIEM TRA FAIL-OPEN:
+ *       Khi /license/verify that bai, client ping /license/ping:
+ *         - Ping OK   (server song, verify bi chan)  => FAIL-CLOSED (chan)
+ *         - Ping fail (server khong doi)              => FAIL-OPEN (cho qua)
+ *       => Chan duoc bo qua bang DevTools / AdBlock / sua host_permissions.
+ *
+ *   [3] OFFLINE GRACE (cua so cho phep mat mang):
+ *       Chi cho qua khi mat mang trong mot khoang thoi gian gioi han.
+ *       Het cua so => chan (fail-closed) cho toi da.
  *
  * MODULE DUNG CHUNG - nap o ca 2 noi:
  *   dashboard.html : <script src="license_core.js"></script>
  *   background.js  : importScripts("license_core.js");
- *
- * LUUU Y QUAN TRONG
- *   - "fail-open": loi mang KHONG duoc khoa nguoi dung. Chi khi server
- *     tra loi "dung khop" thi moi chan.
- *   - Server la nguon su that. Client chi la bo phat.
  * ========================================================================= */
 (function (global) {
   "use strict";
@@ -22,6 +34,7 @@
   // ---- Key trong chrome.storage.local ----
   const KEY_LICENSE = "ccLicense";
   const KEY_SERVER_URL = "ccLicenseServerUrl";
+  const KEY_OFFLINE = "ccLicenseOfflineSince";
 
   // ---- Chu ky xac minh lai (heartbeat): 24 gio ----
   const VERIFY_INTERVAL = 24 * 60 * 60 * 1000;
@@ -38,8 +51,20 @@
   const KEY_LOCKED = "ccLicenseLockedUntil";
 
   // ---- Server mac dinh (duoc ghi de bang UI quan tri) ----
-  // De trong => dung workerUrl da luu san trong chrome.storage.local
   const DEFAULT_SERVER_URL = "https://botchathkt.tung1999zxc.workers.dev";
+
+  /* ---------------------------------------------------------
+   * KHOA CONG XAC MINH CHU KY (ECDSA P-256)
+   * -------------------------------------------------------
+   * Khoa RIENG nam trong Worker Secret "LICENSE_PRIVATE_KEY".
+   * Khoa CONG ben duoi KHONG THE bien thanh khoa rieng.
+   * Sinh cap khoa moi: node _gen_keys.js
+   * ------------------------------------------------------- */
+  const LICENSE_PUBLIC_KEY_B64 =
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERpl81Sw2CQnsbqdVwWg4ucmVz4WSn/H4Zheo9VkvDbJrcK/xU3Te3gW7bm5mvclkpSOr1wQl6gfc/TbBhcMcng==";
+
+  // ---- Cua so offline grace: cho phep mat mang toi da 6 gio ----
+  const OFFLINE_GRACE = 6 * 60 * 60 * 1000;
 
   /* ---------------------------------------------------------
    * TIEN ICH
@@ -92,12 +117,12 @@
    * -------------------------------------------------------
    * Chon cac thanh phan ONH DINH:
    *   - userAgent: co chua phien ban Chrome/OS -> thay doi khi update
-   *   -> se duoc chuan hoa o server (bo phien ban Chrome)
+   *   -> se duoc chuan hoa (bo phien ban Chrome)
    *   - language, platform, screen, colorDepth, timezone, cpu, ram
    *   -> rat on dinh, it trung giua cac may
    *
    * KHONG dung: Math.random(), timestamp, thoi gian thuc.
-   * Doi may => doi fingerprint => phai kich hoat lai ( dung y de).
+   * Doi may => doi fingerprint => phai kich hoat lai (dung y de).
    * ------------------------------------------------------- */
 
   function collectFingerprintParts() {
@@ -226,15 +251,140 @@
       }
       return { ok: res.ok, status: res.status, data: data || {} };
     } catch (e) {
-      // Loi mang / timeout -> coi nhu offline (fail-open)
+      // Loi mang / timeout -> coi nhu offline
       return {
         ok: false,
         offline: true,
-        error: e && e.name === "AbortError" ? "Timeout" : "Khong ket noi duoc server",
+        error:
+          e && e.name === "AbortError" ? "Timeout" : "Khong ket noi duoc server",
       };
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /* ---------------------------------------------------------
+   * XAC MINH CHU KY SO (Uu tien 1)
+   * -------------------------------------------------------
+   * Payload server ky co dang JSON:
+   *   { key, deviceId, plan, expiresAt, status, maxDevices, issuedAt, nonce }
+   *
+   * Client phai:
+   *   1. Xac minh chu ky bang khoa cong (ECDSA P-256 + SHA-256)
+   *   2. Doi chieu payload voi du lieu license trong storage
+   *   3. Tu choi neu bat ky buoc nao that bai
+   * ------------------------------------------------------- */
+
+  function b64ToBytes(b64) {
+    const bin = atob(String(b64 || "").trim());
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  let _pubKeyCache = null;
+
+  async function getPublicKey() {
+    if (_pubKeyCache) return _pubKeyCache;
+    try {
+      if (typeof crypto === "undefined" || !crypto.subtle) return null;
+      const key = await crypto.subtle.importKey(
+        "spki",
+        b64ToBytes(LICENSE_PUBLIC_KEY_B64),
+        { name: "ECDSA", namedCurve: "P-256" },
+        false,
+        ["verify"],
+      );
+      _pubKeyCache = key;
+      return key;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Xac minh chu ky cua payload license.
+   * @param {string} payload - chuoi JSON da ky
+   * @param {string} signature - chu ky base64
+   * @returns {Promise<{ok:boolean, data:object|null, reason:string}>}
+   */
+  async function verifySignature(payload, signature) {
+    if (!payload || !signature) {
+      return { ok: false, data: null, reason: "Thieu payload hoac chu ky" };
+    }
+    const key = await getPublicKey();
+    if (!key) {
+      return { ok: false, data: null, reason: "Khong nap duoc khoa cong" };
+    }
+    try {
+      const sigBytes = b64ToBytes(signature);
+      const dataBytes = new TextEncoder().encode(payload);
+      const valid = await crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" },
+        key,
+        sigBytes,
+        dataBytes,
+      );
+      if (!valid) {
+        return { ok: false, data: null, reason: "Chu ky khong hop le" };
+      }
+      let data = null;
+      try {
+        data = JSON.parse(payload);
+      } catch (e) {
+        return { ok: false, data: null, reason: "Payload khong phai JSON hop le" };
+      }
+      return { ok: true, data: data, reason: "" };
+    } catch (e) {
+      return { ok: false, data: null, reason: "Loi xac minh chu ky" };
+    }
+  }
+
+  /**
+   * Xac minh chu ky VA doi chieu voi license trong storage.
+   * Day la "hang rao" chong gia mao du lieu cuc bo.
+   *
+   * @param {object} lic - license doc tu chrome.storage.local
+   * @returns {Promise<{ok:boolean, reason:string, data:object|null}>}
+   */
+  async function verifyLocalLicense(lic) {
+    if (!lic) return { ok: false, reason: "Chua kich hoat", data: null };
+
+    const r = await verifySignature(lic.payload, lic.signature);
+    if (!r.ok) {
+      return { ok: false, reason: r.reason, data: null };
+    }
+    const d = r.data || {};
+
+    // Payload phai khop key
+    if (String(d.key || "") !== String(lic.key || "")) {
+      return { ok: false, reason: "Payload key khong khop", data: null };
+    }
+    // Payload phai khop device
+    if (
+      String(d.deviceId || "").toUpperCase() !==
+      String(lic.deviceId || "").toUpperCase()
+    ) {
+      return { ok: false, reason: "Payload deviceId khong khop", data: null };
+    }
+    // Payload phai khop han su dung
+    if (Number(d.expiresAt || 0) !== Number(lic.expiresAt || 0)) {
+      return { ok: false, reason: "Payload expiresAt khong khop", data: null };
+    }
+    // Payload phai khop trang thai
+    if (String(d.status || "") !== String(lic.status || "")) {
+      return { ok: false, reason: "Payload status khong khop", data: null };
+    }
+    // Payload phai con han
+    if (d.expiresAt && d.expiresAt > 0 && d.expiresAt < Date.now()) {
+      return { ok: false, reason: "Payload da het han", data: null };
+    }
+    // issuedAt phai khong tuong lai (chong gia mao thoi gian)
+    if (d.issuedAt && d.issuedAt > Date.now() + 60 * 60 * 1000) {
+      return { ok: false, reason: "issuedAt khong hop le", data: null };
+    }
+
+    return { ok: true, reason: "", data: d };
   }
 
   /* ---------------------------------------------------------
@@ -254,6 +404,37 @@
   async function clearLicense() {
     await removeStorage([KEY_LICENSE, KEY_FAILED, KEY_LOCKED]);
     _deviceIdCache = "";
+  }
+
+  /* ---------------------------------------------------------
+   * OFFLINE GRACE (Uu tien 2 - phu)
+   * -------------------------------------------------------
+   * Chi cho qua khi mat mang trong mot khoang gioi han.
+   * Server co the cap nhat revoke -> client van chay toi da 6 gio.
+   * ------------------------------------------------------- */
+
+  async function getOfflineSince() {
+    const res = await getStorage([KEY_OFFLINE]);
+    return res[KEY_OFFLINE] || 0;
+  }
+
+  async function markOffline() {
+    const since = await getOfflineSince();
+    if (!since) {
+      await setStorage({ [KEY_OFFLINE]: Date.now() });
+    }
+  }
+
+  async function clearOffline() {
+    await removeStorage([KEY_OFFLINE]);
+  }
+
+  /** So ms con lai trong cua so offline grace (0 = het). */
+  async function graceRemaining() {
+    const since = await getOfflineSince();
+    if (!since) return 0;
+    const left = OFFLINE_GRACE - (Date.now() - since);
+    return left > 0 ? left : 0;
   }
 
   /* ---------------------------------------------------------
@@ -291,9 +472,28 @@
       };
     }
 
+    // === Uu tien 1: chu ky so phai hop le TRUOC khi tin ===
+    const sig = await verifyLocalLicense(lic);
+    if (!sig.ok) {
+      // Du lieu cuc bi sua/gia mao -> xoa va chan
+      await clearLicense();
+      return {
+        allowed: false,
+        state: "tampered",
+        message:
+          "Du lieu license bi thay doi khong hop le (" + sig.reason + ").",
+        license: null,
+        needsNetwork: false,
+      };
+    }
+
     // Da xac minh gan day -> cho qua, khong can mang
-    const lastVerify = lic.lastVerify || 0;
-    if (Date.now() - lastVerify < VERIFY_INTERVAL) {
+    //
+    // QUAN TRONG: chi dung moc thoi gian LAY TRONG PAYLOAD DA KY (issuedAt).
+    // Truong `lastVerify` trong storage khong duoc tin vi attacker co the
+    // sua no. Payload da ky thi khong sua duoc (mat chu ky -> tampered).
+    const lastVerify = Number(sig.data.issuedAt || 0);
+    if (lastVerify > 0 && Date.now() - lastVerify < VERIFY_INTERVAL) {
       return {
         allowed: true,
         state: "valid",
@@ -304,8 +504,24 @@
     }
 
     // Da het chu ky xac minh -> can goi server
-    const result = await verify();
-    return result;
+    return await verify();
+  }
+
+  /* ---------------------------------------------------------
+   * PING SERVER (Uu tien 2)
+   * -------------------------------------------------------
+   * Dung de phan biet:
+   *   - Server SONG (ping OK)  => verify that bai la do chan/gia => FAIL-CLOSED
+   *   - Server CHET (ping fail)=> mat mang that su            => FAIL-OPEN
+   * ------------------------------------------------------- */
+
+  async function pingServer() {
+    const res = await apiFetch("/license/ping", { method: "GET" });
+    if (res.offline) return { ok: false, reason: res.error || "offline" };
+    if (!res.ok || !res.data || res.data.ok !== true) {
+      return { ok: false, reason: "ping khong hop le" };
+    }
+    return { ok: true, reason: "", data: res.data };
   }
 
   /* ---------------------------------------------------------
@@ -334,30 +550,66 @@
       }),
     });
 
-    // FAIL-OPEN: loi mang -> van cho dung, chi danh dau can kiem tra lai
+    // === NHANH FAIL-OPEN: loi mang hoac timeout ===
     if (res.offline) {
-      const updated = {
-        ...lic,
-        lastVerify: Date.now(),
-        pendingRecheck: true,
-      };
-      await saveLicense(updated);
+      // Ping de phan biet "mat mang thu su" vs "verify bi chan"
+      const ping = await pingServer();
+
+      if (!ping.ok) {
+        // Server thuc su khong doi -> fail-OPEN voi cua so grace
+        await markOffline();
+        const grace = await graceRemaining();
+        if (grace > 0) {
+          const updated = {
+            ...lic,
+            lastVerify: Date.now(),
+            pendingRecheck: true,
+          };
+          await saveLicense(updated);
+          return {
+            allowed: true,
+            state: "valid",
+            message: "Khong ket noi server, dung ban cache",
+            license: updated,
+            needsNetwork: true,
+          };
+        }
+        // Het cua so grace -> chan (fail-closed)
+        await clearLicense();
+        await clearOffline();
+        return {
+          allowed: false,
+          state: "invalid",
+          message:
+            "Mat ket noi license server qua lau. Vui long kiem tra mang va kich hoat lai.",
+          license: null,
+          needsNetwork: false,
+        };
+      }
+
+      // Ping OK nhung verify that bai => server dang song, verify bi chan/gia
+      // => FAIL-CLOSED (chan ngay, khong cho qua)
+      await clearLicense();
+      await clearOffline();
       return {
-        allowed: true,
-        state: "valid",
-        message: "Khong ket noi server, dung ban cache",
-        license: updated,
-        needsNetwork: true,
+        allowed: false,
+        state: "invalid",
+        message:
+          "Xac minh license that bai (server dang hoat dong). Key co the da bi thu hoi.",
+        license: null,
+        needsNetwork: false,
       };
     }
 
     const data = res.data || {};
 
+    // === SERVER TRA CODE TUONG MINH ===
     if (!res.ok || data.ok !== true) {
       const code = data.code || "invalid";
       if (code === "revoked" || code === "expired" || code === "invalid") {
         // Server tra loi DUNG khop -> chan ngay
         await clearLicense();
+        await clearOffline();
         return {
           allowed: false,
           state: code,
@@ -366,28 +618,90 @@
           needsNetwork: false,
         };
       }
-      // Loi tam thoi -> fail-open
-      const updated = { ...lic, lastVerify: Date.now(), pendingRecheck: true };
-      await saveLicense(updated);
+      // Loi tam thoi (vd rate_limit) -> ping de quyet dinh
+      const ping = await pingServer();
+      if (!ping.ok) {
+        await markOffline();
+        const grace = await graceRemaining();
+        if (grace > 0) {
+          const updated = {
+            ...lic,
+            lastVerify: Date.now(),
+            pendingRecheck: true,
+          };
+          await saveLicense(updated);
+          return {
+            allowed: true,
+            state: "valid",
+            message: data.message || "Khong xac minh duoc, dung ban cache",
+            license: updated,
+            needsNetwork: true,
+          };
+        }
+        await clearLicense();
+        await clearOffline();
+        return {
+          allowed: false,
+          state: "invalid",
+          message: "Khong xac minh duoc license server qua lau.",
+          license: null,
+          needsNetwork: false,
+        };
+      }
+      // Server song => that bai that su -> fail-closed
+      await clearLicense();
+      await clearOffline();
       return {
-        allowed: true,
-        state: "valid",
-        message: data.message || "Khong xac minh duoc, dung ban cache",
-        license: updated,
-        needsNetwork: true,
+        allowed: false,
+        state: "invalid",
+        message: data.message || "Xac minh license that bai.",
+        license: null,
+        needsNetwork: false,
       };
     }
 
-    // Server OK -> cap nhat thong tin moi nhat
+    // === SERVER OK ===
+    // Uu tien 1: chi chap nhan duoi co chu ky hop le
+    const signed = await verifySignature(data.payload, data.signature);
+    if (!signed.ok) {
+      await clearLicense();
+      return {
+        allowed: false,
+        state: "tampered",
+        message:
+          "Chu ky license khong hop le (" + signed.reason + "). Key co the bi gia mao.",
+        license: null,
+        needsNetwork: false,
+      };
+    }
+    const p = signed.data || {};
+    if (
+      String(p.key || "") !== String(lic.key || "") ||
+      String(p.deviceId || "").toUpperCase() !== String(deviceId || "").toUpperCase()
+    ) {
+      await clearLicense();
+      return {
+        allowed: false,
+        state: "tampered",
+        message: "Du lieu license tra ve khong khop voi thiet bi.",
+        license: null,
+        needsNetwork: false,
+      };
+    }
+
     const updated = {
       ...lic,
-      expiresAt: data.expiresAt || lic.expiresAt,
+      expiresAt: Number(p.expiresAt || lic.expiresAt || 0),
       status: "active",
       lastVerify: Date.now(),
       pendingRecheck: false,
-      plan: data.plan || lic.plan,
+      plan: p.plan || lic.plan,
+      maxDevices: p.maxDevices || lic.maxDevices || 1,
+      payload: data.payload,
+      signature: data.signature,
     };
     await saveLicense(updated);
+    await clearOffline();
 
     return {
       allowed: true,
@@ -472,20 +786,47 @@
       };
     }
 
-    // Thanh cong -> luu
+    // === Uu tien 1: bat buoc phai co chu ky hop le moi luu ===
+    const signed = await verifySignature(data.payload, data.signature);
+    if (!signed.ok) {
+      return {
+        ok: false,
+        message:
+          "Chu ky license khong hop le (" +
+          signed.reason +
+          "). Key co the bi gia mao.",
+        code: "bad_signature",
+      };
+    }
+    const p = signed.data || {};
+    if (
+      String(p.key || "") !== cleanKey ||
+      String(p.deviceId || "").toUpperCase() !== String(deviceId || "").toUpperCase()
+    ) {
+      return {
+        ok: false,
+        message: "Du lieu kich hoat khong khop voi key/thiet bi.",
+        code: "bad_signature",
+      };
+    }
+
+    // Thanh cong -> luu (kem chu ky)
     const license = {
       key: cleanKey,
       deviceId: deviceId,
       activatedAt: Date.now(),
-      expiresAt: data.expiresAt || 0,
+      expiresAt: Number(p.expiresAt || 0),
       lastVerify: Date.now(),
       status: "active",
-      plan: data.plan || "custom",
-      maxDevices: data.maxDevices || 1,
+      plan: p.plan || "custom",
+      maxDevices: p.maxDevices || 1,
       pendingRecheck: false,
+      payload: data.payload,
+      signature: data.signature,
     };
     await saveLicense(license);
     await setStorage({ [KEY_FAILED]: 0, [KEY_LOCKED]: 0 });
+    await clearOffline();
 
     return { ok: true, message: "Kich hoat thanh cong", license: license };
   }
@@ -515,6 +856,7 @@
 
   async function deactivate() {
     await clearLicense();
+    await clearOffline();
     return { ok: true };
   }
 
@@ -526,7 +868,9 @@
     KEY_LICENSE,
     KEY_SERVER_URL,
     VERIFY_INTERVAL,
+    OFFLINE_GRACE,
     DEFAULT_SERVER_URL,
+    LICENSE_PUBLIC_KEY_B64,
     getDeviceId,
     getServerUrl,
     setServerUrl,
@@ -539,6 +883,10 @@
     deactivate,
     getVersion,
     evaluateLocal,
+    verifySignature,
+    verifyLocalLicense,
+    pingServer,
+    graceRemaining,
   };
 
   global.LicenseCore = api;

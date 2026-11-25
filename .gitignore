@@ -3,3 +3,11 @@ node_modules/
 .dev.vars
 .env
 *.log
+
+# File tam sinh khi test
+_worker_test.mjs
+
+# KHONG commit khoa rieng / file chua khoa
+*.pem
+*.key
+_keys.local.js

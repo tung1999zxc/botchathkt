@@ -1,6 +1,7 @@
 // Test harness: chay worker.js voi KV gia lap, kiem tra day du luong license.
 const fs = require("fs");
 const path = require("path");
+const { TEST_PRIVATE_KEY, TEST_PUBLIC_KEY, patchPublicKey } = require("./_test_keys.js");
 
 const dir = __dirname;
 
@@ -38,10 +39,36 @@ const env = {
   FB_APP_SECRET: "secret",
   REDIRECT_URI: "https://example.workers.dev/callback",
   EXT_ORIGIN: "chrome-extension://abcdefghijklmnop",
+  // Khoa chu ky TEST (khong phai khoa production)
+  LICENSE_PRIVATE_KEY: TEST_PRIVATE_KEY,
 };
 
+// ---- Khoa cong TEST de xac minh chu ky tu server ----
+const PUB_B64 = TEST_PUBLIC_KEY;
+
+async function verifySig(payload, signature) {
+  const key = await crypto.subtle.importKey(
+    "spki",
+    Buffer.from(PUB_B64, "base64"),
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"],
+  );
+  return crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    Buffer.from(signature, "base64"),
+    new TextEncoder().encode(payload),
+  );
+}
+
 // ---- Nap worker.js (la ESM) ----
-const src = fs.readFileSync(path.join(dir, "worker.js"), "utf8");
+// Patch khoa cong trong worker.js sang khoa cong TEST de kiem tra duoc
+// chu ky bang cap khoa test (khong can khoa production).
+const workerSrc = fs.readFileSync(path.join(dir, "worker.js"), "utf8");
+const PROD_PUB =
+  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERpl81Sw2CQnsbqdVwWg4ucmVz4WSn/H4Zheo9VkvDbJrcK/xU3Te3gW7bm5mvclkpSOr1wQl6gfc/TbBhcMcng==";
+const src = patchPublicKey(workerSrc, PROD_PUB);
 const { pathToFileURL } = require("url");
 
 async function loadWorker() {
@@ -332,6 +359,125 @@ async function main() {
   );
   ok((r.headers.get("Access-Control-Allow-Origin") || "") === "chrome-extension://abcdefghijklmnop",
     "CORS echo dung origin extension", r.headers.get("Access-Control-Allow-Origin"));
+
+  console.log("\n=== 21. CHU KY SO (uu tien 1) ===");
+  // Dang nhap lai (session da bi logout o test 17)
+  r = await fetchIt(
+    new Request(BASE + "/admin/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "test-admin-pass" }),
+    }),
+  );
+  const cookie2 = (r.headers.get("Set-Cookie") || "").split(";")[0];
+  ok(!!cookie2, "Dang nhap lai de tao key test chu ky");
+
+  // Tao key moi de kich hoat
+  r = await fetchIt(
+    new Request(BASE + "/admin/api/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie2 },
+      body: JSON.stringify({ plan: "30d", maxDevices: 1, note: "KY" }),
+    }),
+  );
+  j = await r.json();
+  const keySig = j.key;
+
+  r = await fetchIt(
+    new Request(BASE + "/license/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: keySig, deviceId: "DEVSIG" }),
+    }),
+  );
+  j = await r.json();
+  ok(j.ok === true, "Kich hoat de test chu ky", JSON.stringify(j));
+  ok(typeof j.payload === "string" && j.payload.length > 0, "Server tra payload da ky");
+  ok(typeof j.signature === "string" && j.signature.length > 0, "Server tra chu ky");
+  ok(typeof j.keyId === "string" && j.keyId.length > 0, "Server tra keyId (fingerprint khoa cong)");
+
+  const sigOk = await verifySig(j.payload, j.signature);
+  ok(sigOk === true, "Chu ky xac minh OK bang khoa cong");
+
+  const pd = JSON.parse(j.payload);
+  ok(pd.key === keySig, "Payload chua key dung", pd.key);
+  ok(pd.deviceId === "DEVSIG", "Payload chua deviceId dung", pd.deviceId);
+  ok(pd.status === "active", "Payload co status=active");
+  ok(pd.issuedAt > 0, "Payload co issuedAt");
+  ok(typeof pd.nonce === "string" && pd.nonce.length > 0, "Payload co nonce (chong replay)");
+
+  // Chu ky gia -> phai bi tu choi
+  const badSig = Buffer.from(j.signature, "base64");
+  badSig[5] ^= 0xff;
+  const badOk = await verifySig(j.payload, badSig.toString("base64"));
+  ok(badOk === false, "Chu ky sua doi bi tu choi");
+
+  // Payload sua -> phai bi tu choi
+  const tamperedPayload = j.payload.replace(/"maxDevices":1/, '"maxDevices":99');
+  const tamperOk = await verifySig(tamperedPayload, j.signature);
+  ok(tamperOk === false, "Payload sua doi bi tu choi");
+
+  console.log("\n=== 22. VERIFY TRA CHU KY ===");
+  r = await fetchIt(
+    new Request(BASE + "/license/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: keySig, deviceId: "DEVSIG" }),
+    }),
+  );
+  j = await r.json();
+  ok(j.ok === true, "Verify key vua kich hoat -> ok");
+  ok(!!j.payload && !!j.signature, "Verify cung tra payload + chu ky");
+  ok(await verifySig(j.payload, j.signature) === true, "Chu ky tu verify hop le");
+
+  console.log("\n=== 23. PING BAO HIET CO CHU KY ===");
+  r = await fetchIt(new Request(BASE + "/license/ping"));
+  j = await r.json();
+  ok(j.hasSigning === true, "Ping bao cao server da co khoa chu ky");
+
+  console.log("\n=== 24. KHONG CO KHOA CHI KY -> TRA payload NULL ===");
+  const envNoKey = { ...env, LICENSE_PRIVATE_KEY: "" };
+  const worker2 = await loadWorker();
+  // Tao key rieng cho test nay
+  r = await fetchIt(
+    new Request(BASE + "/admin/api/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie2 },
+      body: JSON.stringify({ plan: "30d", maxDevices: 1, note: "NOKEY" }),
+    }),
+  );
+  j = await r.json();
+  const keyNoSig = j.key;
+  r = await worker2.fetch(
+    new Request(BASE + "/license/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: keyNoSig, deviceId: "DEVSIG2" }),
+    }),
+    envNoKey,
+    {},
+  );
+  j = await r.json();
+  ok(j.ok === true, "Van kich hoat duoc khi thieu khoa (server chua cau hinh)", JSON.stringify(j));
+  ok(j.signature === null, "Khong co chu ky -> signature=null (client se tu choi)", String(j.signature));
+
+  console.log("\n=== 25. SERVER KHONG THE KY DU LIEU KHAC ===");
+  // Client phai tu choi payload ma server ky cho thiet bi khac
+  r = await fetchIt(
+    new Request(BASE + "/license/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: keySig, deviceId: "DEVICE-OTHER" }),
+    }),
+  );
+  j = await r.json();
+  if (j.ok) {
+    const pd2 = JSON.parse(j.payload);
+    ok(pd2.deviceId === "DEVICE-OTHER", "Payload luon khop voi device gui len", pd2.deviceId);
+    ok(await verifySig(j.payload, j.signature) === true, "Chu ky hop le cho device moi");
+  } else {
+    ok(true, "Device moi bi tu choi (gioi han may) - khong can payload");
+  }
 
   console.log("\n=========================================");
   console.log("KET QUA: " + pass + " PASS / " + fail + " FAIL");

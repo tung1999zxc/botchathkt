@@ -61,8 +61,42 @@ Vao **Settings** > **Variables and Secrets** > **Add**:
 | `FB_APP_SECRET` | App Secret Facebook (da co san) | Secret |
 | `REDIRECT_URI` | `https://botchathkt.tung1999zxc.workers.dev/callback` | Variable |
 | `EXT_ORIGIN` | `chrome-extension://<ID>` | Variable |
+| `LICENSE_PRIVATE_KEY` | Khoa rieng ECDSA P-256 (base64 PKCS8) | **Secret** |
 
 > `ADMIN_PASSWORD` BAT BUOC dat dang **Secret**. Dat trong code thi bat ky ai cung doc duoc.
+
+### `LICENSE_PRIVATE_KEY` — khoa chu ky so (BAT BUOC cho co ban mat)
+
+Server ky moi payload license bang ECDSA P-256. Extension xac minh bang khoa cong
+(da nhung san trong `license_core.js`). Khong co khoa rieng => server tra
+`signature: null` => extension **tu choi** key do.
+
+**Sinh cap khoa moi (neu can doi):**
+
+```bash
+node _gen_keys.js
+```
+
+Lenh nay in ra 2 gia tri:
+
+| Gia tri | Dung o dau |
+| --- | --- |
+| `LICENSE_PRIVATE_KEY` | Worker > Settings > Variables and Secrets > Add > **Secret** |
+| `LICENSE_PUBLIC_KEY` | Nhung vao `LICENSE_PUBLIC_KEY_B64` trong `license_core.js` **va** `LICENSE_PUBLIC_KEY_B64` trong `worker.js` |
+
+> **KHONG** commit khoa rieng vao git. `LICENSE_PRIVATE_KEY` chi nen ton tai
+> trong Cloudflare Secret. Khoa cong (`LICENSE_PUBLIC_KEY`) thi duoc commit binh
+> thuong vi no khong phai bi mat.
+
+> **Luu y:** doi khoa => phai deploy lai Worker **va** tai lai extension.
+> Key da kich hoat tren may cu se bi bao "tampered" va phai nhap lai.
+
+Kiem tra server da co khoa chu ky chua:
+
+```
+GET https://botchathkt.tung1999zxc.workers.dev/license/ping
+-> { "ok": true, "hasSigning": true, ... }
+```
 
 ### Buoc 3: Deploy
 
@@ -202,13 +236,48 @@ Neu database bi lo, ban KHONG khoi phuc duoc key cua khach - chi thay duoi dang 
 
 `telegram_config.js` dang hardcode `DEFAULT_BOT_TOKEN`. Bat ky ai unpack extension deu doc duoc. Neu dung bot de quan tri key -> **tach ra**, dat token tren Worker.
 
-### 6.3 Fail-open khi mat mang
+### 6.3 Fail-open khi mat mang (co gioi han)
 
-Extension KHONG khoa nguoi dung khi mat mang. Chi khi server tra loi "dung khop" (revoked / expired / invalid) moi chan.
+Extension KHONG khoa nguoi dung khi mat mang, NHUNG chi trong mot **cua so grace 6 gio**.
+Het cua so -> chan (fail-closed) va xoa license.
 
-Ly do: neu fail-closed, moi lan server ban gap loi la toan bo khach mat tool. Loi mang != key khong hop le.
+Ly do: neu fail-closed ngay, moi lan server ban gap loi la toan bo khach mat tool. Loi mang != key khong hop le.
 
-### 6.4 Rate limit
+**Chi mat mang moi fail-open.** Neu `/license/verify` that bai nhung `/license/ping` van
+tra `ok: true` => server dang song, verify bi chan (AdBlock, DevTools block, sua
+`host_permissions`) => extension **fail-closed** chan ngay.
+
+Tren Worker, kiem tra trang thai chu ky:
+
+```
+GET /license/ping
+-> { "ok": true, "hasSigning": true, ... }
+```
+
+`hasSigning: false` => chua dat Secret `LICENSE_PRIVATE_KEY`.
+
+### 6.4 Chu ky so (chong gia mao du lieu cuc bo)
+
+Moi payload license server tra ve deu co chu ky ECDSA P-256:
+
+```json
+{
+  "key": "TL_XXXX-...",
+  "deviceId": "...",
+  "plan": "30d",
+  "expiresAt": 1798184926427,
+  "status": "active",
+  "maxDevices": 1,
+  "issuedAt": 1795592926427,
+  "nonce": "..."
+}
+```
+
+Extension xac minh chu ky bang khoa cong nhung san truoc khi tin bat ky thu
+giong gi trong `chrome.storage.local`. Sua `expiresAt`, xoa `signature`, hay dung
+`lastVerify` de "gia han" deu bi chan voi trang thai `tampered`.
+
+### 6.5 Rate limit
 
 - 20 lan kich hoat / 10 phut / IP
 - 5 lan thu key sai -> khoa key tam thoi 15 phut

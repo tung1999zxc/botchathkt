@@ -188,6 +188,11 @@
         showMsg("Key da het han. Vui long nhap key moi.", "err");
       } else if (res.state === "revoked") {
         showMsg("Key da bi thu hoi. Vui long lien he admin.", "err");
+      } else if (res.state === "tampered") {
+        showMsg(
+          "Du lieu license bi thay doi khong hop le. Vui long nhap lai key.",
+          "err",
+        );
       } else if (res.state === "none") {
         showMsg("Ban chua kich hoat extension. Nhap key de tiep tuc.", "info");
       } else {
@@ -249,7 +254,7 @@
     var el = __licenseBadge();
     var dot = el.querySelector("span");
     var txt = document.getElementById("licenseBadgeText");
-    var colors = { valid: "#22c55e", expired: "#ef4444", revoked: "#ef4444", none: "#a0aec0" };
+    var colors = { valid: "#22c55e", expired: "#ef4444", revoked: "#ef4444", tampered: "#ef4444", none: "#a0aec0" };
     dot.style.background = colors[state] || "#a0aec0";
     if (state === "valid" && expiresAt) {
       var days = Math.ceil((expiresAt - Date.now()) / 86400000);
@@ -260,6 +265,8 @@
       txt.textContent = "License: het han";
     } else if (state === "revoked") {
       txt.textContent = "License: da thu hoi";
+    } else if (state === "tampered") {
+      txt.textContent = "License: khong hop le";
     } else {
       txt.textContent = "Chua kich hoat";
     }

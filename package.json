@@ -6,7 +6,12 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "test": "node test_license.js && node test_core.js && node test_integration.js",
+    "test:server": "node test_license.js",
+    "test:core": "node test_core.js",
+    "test:integration": "node test_integration.js",
+    "keys": "node _gen_keys.js"
   },
   "devDependencies": {
     "wrangler": "^4.168.0"

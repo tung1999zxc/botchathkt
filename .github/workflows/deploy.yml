@@ -1,13 +1,15 @@
-name: Deploy Worker
+name: Deploy Worker (manual)
+
+# CHAY THU CONG: Actions > Deploy Worker > Run workflow
+#
+# Cach deploy chinh la CLOUDFLARE WORKERS BUILDS (git integration)
+# da duoc gan san trong Cloudflare Dashboard - tu dong deploy moi khi push.
+# File nay la phuong an DU PHONG, dung khi Workers Builds gap loi.
+#
+# - Cloudflare Dashboard > Workers & Pages > license-kv > Settings > Builds
+#   -> xem trang thai build moi nhat
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "worker.js"
-      - "wrangler.toml"
-      - "package.json"
-      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 jobs:

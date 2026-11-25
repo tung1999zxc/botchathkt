@@ -3,13 +3,13 @@
 # --------------------------------------------------------------------------
 # File nay cho Wrangler biet:
 #   - Entry point la file worker.js
-#   - Worker ten "license-kv" (phai trung voi ten Worker tren Cloudflare)
+#   - Worker ten "botchathkt" (phai trung voi ten Worker tren Cloudflare)
 #   - Binding KV Namespace cho he thong license key
 #
 # Deploy: npx wrangler deploy  (hoac Cloudflare Workers Builds tu dong)
 # ==========================================================================
 
-name = "license-kv"
+name = "botchathkt"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 

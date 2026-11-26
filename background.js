@@ -362,6 +362,16 @@ function scheduleCampCoreAlarm() {
 chrome.runtime.onInstalled.addListener(() => scheduleCampCoreAlarm());
 chrome.runtime.onStartup.addListener(() => scheduleCampCoreAlarm());
 
+// 🧹 Dọn dữ liệu cũ của tính năng "số ngày chưa tiêu tiền" (đã bỏ để
+//    tiết kiệm API). Xoá 1 lần khi cập nhật extension.
+chrome.runtime.onInstalled.addListener(() => {
+  try {
+    chrome.storage.local.remove(["camp_campaign_activity"], () => {});
+  } catch (e) {
+    /* bỏ qua */
+  }
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === CAMP_CORE_ALARM) {
     if (!self.CampCore) return;

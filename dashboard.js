@@ -603,9 +603,26 @@ window.raiseThresholdForAdset = async function (
 window.saveLocalConfig = function (adsetId, btn) {
   const row = btn.closest("tr");
 
-  const maxSpend = parseFloat(row.querySelector(".local-spend").value) || 0;
-  const maxPrice = parseFloat(row.querySelector(".local-price").value) || 0;
-  const maxCpm = parseFloat(row.querySelector(".local-cpm").value) || 0;
+  // Ngưỡng CHUNG hiện tại — dùng làm fallback khi ô nhập bị trống.
+  // (Ô trống KHÔNG được ghi thành 0: 0 là số hữu hạn → phía "Tắt Camp"
+  //  sẽ coi là luôn vượt ngưỡng giá → nhóm bị tắt oan.)
+  const globalSpend =
+    parseFloat(document.getElementById("apMaxSpend")?.value) || 10000;
+  const globalPrice =
+    parseFloat(document.getElementById("apMaxPrice")?.value) || 12000;
+  const globalCpm =
+    parseFloat(document.getElementById("apMaxCpm")?.value) || 50000;
+
+  const readLim = (sel, fb) => {
+    const raw = (row.querySelector(sel)?.value || "").trim();
+    if (raw === "") return fb;
+    const v = parseFloat(raw);
+    return Number.isFinite(v) ? v : fb;
+  };
+
+  const maxSpend = readLim(".local-spend", globalSpend);
+  const maxPrice = readLim(".local-price", globalPrice);
+  const maxCpm = readLim(".local-cpm", globalCpm);
   // Ô CPC (chế độ "Kết hợp CPC") — có thể không tồn tại nếu đang ẩn.
   // Nếu không có ô → giữ ngưỡng CPC đã lưu, nếu chưa có thì lấy ngưỡng chung
   // (tránh ghi 0 → sau này bật combo sẽ luôn coi là vượt ngưỡng).
@@ -615,8 +632,18 @@ window.saveLocalConfig = function (adsetId, btn) {
       ? window.getGlobalMaxCpc()
       : 800;
   const maxCpc = cpcInput
-    ? parseFloat(cpcInput.value) || 0
+    ? readLim(".local-cpc", globalCpc)
     : parseFloat(window.localConfigs[adsetId]?.maxCpc) || globalCpc;
+
+  // (K) Nhóm này có còn là "ngưỡng RIÊNG do user tự đặt" không?
+  //     - maxSpend KHÔNG tính: nó được hệ thống nâng tự động theo số KQ mới
+  //       → không phải do user đặt.
+  //     - maxPrice / maxCpm / maxCpc: nếu khác ngưỡng chung → user đã tay
+  //       đặt → đánh dấu __custom để cơ chế "lan ngưỡng chung" không ghi đè.
+  const isCustom =
+    maxPrice !== globalPrice ||
+    maxCpm !== globalCpm ||
+    maxCpc !== globalCpc;
 
   // Nếu chưa có config thì tạo mới
   if (!window.localConfigs[adsetId]) {
@@ -632,12 +659,19 @@ window.saveLocalConfig = function (adsetId, btn) {
       originalMaxCpm: maxCpm,
       originalMaxCpc: maxCpc,
     };
+    // (K) Đánh dấu "user đã tự đặt ngưỡng riêng" → cơ chế "lan ngưỡng chung"
+    //     sẽ KHÔNG ghi đè nhóm này.
+    if (isCustom) window.localConfigs[adsetId].__custom = true;
   } else {
     // Update config hiện tại
     window.localConfigs[adsetId].maxSpend = maxSpend;
     window.localConfigs[adsetId].maxPrice = maxPrice;
     window.localConfigs[adsetId].maxCpm = maxCpm;
     if (cpcInput) window.localConfigs[adsetId].maxCpc = maxCpc;
+
+    // (K) Cập nhật cờ "user đã tự đặt ngưỡng riêng" (xem giải thích ở trên)
+    if (isCustom) window.localConfigs[adsetId].__custom = true;
+    else delete window.localConfigs[adsetId].__custom;
 
     // Nếu chưa có bản gốc thì tạo
     if (!window.localConfigs[adsetId].originalMaxSpend) {
@@ -705,9 +739,12 @@ window.resetLocalConfig = function (adsetId, btn) {
   config.maxCpm = config.originalMaxCpm || globalMaxCpm;
   config.maxCpc = config.originalMaxCpc || globalMaxCpc;
 
+  // (K) Reset về ngưỡng chung → nhóm này KHÔNG còn là "tự đặt riêng"
+  //     → xoá cờ __custom để nó lại bám theo ngưỡng chung.
+  delete config.__custom;
+
   // Save localStorage
   window.persistLocalConfigs();
-  9;
 
   // Update UI
   row.querySelector(".local-spend").value = config.maxSpend;
@@ -2205,6 +2242,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (targetStatus === "ACTIVE" && isPaused) continue;
             if (targetStatus === "PAUSED" && !isPaused) continue;
 
+            // ⭐ CHỈ HIỂN THỊ NHÓM ĐÃ TIÊU TIỀN (chi tiêu > 0)
+            //    Nhóm chưa tiêu (spend = 0) bị ẩn khỏi bảng Chỉ Số.
+            if (targetStatus === "ACTIVE" && (Number(adset.spend) || 0) <= 0) {
+              continue;
+            }
+
             const insights = {
               spend: adset.spend,
               actions: adset.metrics?.actions || [],
@@ -2260,7 +2303,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                             <td>
                                 <div style="display: flex; gap: 4px; align-items: center; justify-content: center;">
                                     <input type="number" class="local-spend" placeholder="Tiền" title="Ngưỡng tiêu" style="width:55px; border:1px solid #ddd;" value="${localDisplay.maxSpend || globalMaxSpend}">
-                                    <input type="number" class="local-price" placeholder="Giá" title="Ngưỡng giá (CPR/CPL/CPC)" style="width:90px; border:1px solid #ddd;" value="${localDisplay.maxPrice ?? (localDisplay.maxCpr || globalMaxPrice)}">
+                                    <input type="number" class="local-price" placeholder="Giá" title="Ngưỡng giá (CPR/CPL/CPC)" style="width:90px; border:1px solid #ddd;" value="${localDisplay.maxPrice || localDisplay.maxCpr || globalMaxPrice}">
                                     ${cpcInputHtml}
                                     <input type="number" class="local-cpm" placeholder="CPM" title="Ngưỡng CPM" style="width:55px; border:1px solid #ddd;" value="${localDisplay.maxCpm || globalMaxCpm}">
                                  <button class="btn-save-local" data-id="${adset.adsetId}" style="padding: 4px 8px; font-size: 11px; cursor: pointer; background: #1877f2; color: #fff; border: none; border-radius: 4px;">Lưu</button>
@@ -2402,8 +2445,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       // ⭐ GÁN 1 LẦN DUY NHẤT (atomic) — chống nhân đôi khi 2 luồng render
       //    chạy song song. Gán (ghi đè) chứ không phải += (cộng dồn).
-      if (targetStatus === "ACTIVE") tableBody.innerHTML = rowsHtml;
-      else if (pausedTableBody) pausedTableBody.innerHTML = pausedRowsHtml;
+      if (targetStatus === "ACTIVE") {
+        tableBody.innerHTML = rowsHtml || `<tr><td colspan="19" style="text-align:center; color:#8c939d; padding:14px;">Chưa có nhóm nào đã tiêu tiền hôm nay.</td></tr>`;
+      } else if (pausedTableBody) pausedTableBody.innerHTML = pausedRowsHtml;
       if (billingList) billingList.innerHTML = billingHtml;
 
       document.getElementById("loading").style.display = "none";
@@ -2411,6 +2455,196 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // Export ra window (để các listener ngoài try-block gọi được)
     window.renderScanFromCache = renderScanFromCache;
+
+    /* =================================================================
+     * 🚦 BẢNG TRẠNG THÁI CHIẾN DỊCH
+     * -----------------------------------------------------------------
+     * Liệt kê các CHIẾN DỊCH (campaign) đã quét được, kèm:
+     *   - Trạng thái hiện tại (ĐANG CHẠY / ĐÃ TẮT)
+     *   - Số nhóm / số nhóm đang chạy / chi tiêu hôm nay (tính từ cache
+     *     adsets của background — KHÔNG gọi thêm API)
+     *   - NÚT TẮT CHIẾN DỊCH (POST status=PAUSED lên Meta Graph API)
+     *
+     * ⭐ KHÔNG theo dõi "ngày tiêu gần nhất" / "số ngày chưa tiêu tiền"
+     *    vì cần gọi API insights theo ngày (tốn API). Đã bỏ.
+     *
+     * Nguồn dữ liệu: rows cache của background (camp_core_state).
+     * ================================================================= */
+
+    const escapeHtml = (s) =>
+      String(s == null ? "" : s).replace(
+        /[&<>"']/g,
+        (c) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          })[c],
+      );
+
+    const renderCampaignStatusTable = async () => {
+      const tbody = document.getElementById("campaignStatusTableBody");
+      if (!tbody) return;
+
+      let core = null;
+      try {
+        core = await fetchCoreState();
+      } catch (e) {
+        /* bỏ qua */
+      }
+      if (!core) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#8c939d;">Chưa có dữ liệu.</td></tr>`;
+        return;
+      }
+
+      const rows = core.state?.rows || [];
+
+      // ⭐ CHỈ HIỂN THỊ CHIẾN DỊCH ĐANG BẬT
+      //    (campaignStatus = ACTIVE) → các chiến dịch đã tắt không hiện.
+      const byCampaign = new Map();
+      for (const row of rows) {
+        if (!row || row.error) continue;
+        const cid = String(row.campaignId || "");
+        if (!cid) continue;
+        if (!byCampaign.has(cid)) {
+          byCampaign.set(cid, {
+            campaignId: cid,
+            campaignName: row.campaignName || cid,
+            accountId: row.accountId || "",
+            accountName: row.accountName || row.accountId || "",
+            campaignStatus:
+              row.campaignStatus || row.effectiveStatus || "",
+            groupCount: 0,
+            activeGroups: 0,
+            spend: 0,
+          });
+        }
+        const c = byCampaign.get(cid);
+        if (row.campaignName) c.campaignName = row.campaignName;
+        if (row.accountName) c.accountName = row.accountName;
+        c.groupCount++;
+        if (!row.isPaused) c.activeGroups++;
+        c.spend += Number(row.spend) || 0;
+        if (row.campaignStatus) c.campaignStatus = row.campaignStatus;
+      }
+
+      // ⚠️ Lọc bỏ chiến dịch đã tắt (chỉ giữ ACTIVE)
+      for (const [cid, c] of [...byCampaign.entries()]) {
+        const st = String(c.campaignStatus).toUpperCase();
+        if (st && st !== "ACTIVE") byCampaign.delete(cid);
+      }
+
+      if (!byCampaign.size) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#8c939d;">Chưa có dữ liệu — hãy bấm "QUÉT" để lấy dữ liệu chiến dịch.</td></tr>`;
+        return;
+      }
+
+      let html = "";
+      for (const [cid, c] of byCampaign.entries()) {
+        const campaignActive =
+          String(c.campaignStatus).toUpperCase() === "ACTIVE";
+        const isRunning = campaignActive && c.activeGroups > 0;
+
+        const statusHtml = isRunning
+          ? `<span style="color:#31a24c; font-weight:bold;">🟢 ĐANG CHẠY</span>`
+          : `<span style="color:#d97706; font-weight:bold;">🟡 ĐANG BẬT (CHƯA TIÊU)</span>`;
+
+        const groupsHtml = `<span style="font-family:monospace;">${c.activeGroups}/${c.groupCount}</span> <span style="font-size:10px; color:#8c939d;">nhóm chạy/tổng</span>`;
+
+        const spendHtml =
+          c.spend > 0
+            ? `<span style="color:#d97706; font-weight:bold;">${c.spend.toLocaleString("vi-VN")} đ</span>`
+            : `<span style="color:#8c939d;">0 đ</span>`;
+
+        // Nút tắt chiến dịch (bảng này chỉ hiện CD đang bật → luôn có nút TẮT)
+        const actionHtml = `<button class="btn btn-red btn-pause-campaign" data-campaign-id="${escapeHtml(cid)}" data-campaign-name="${escapeHtml(c.campaignName)}" data-action="pause" style="padding:5px 10px; font-size:11px; cursor:pointer; border:none; border-radius:4px;">⛔ TẮT CHIẾN DỊCH</button>`;
+
+        html += `
+          <tr>
+            <td style="font-size:11px; color:#606770;">${escapeHtml(c.accountName)}</td>
+            <td style="color:#1877f2; font-size:12px; font-weight:bold;">${escapeHtml(c.campaignName)}</td>
+            <td>${statusHtml}</td>
+            <td>${groupsHtml}</td>
+            <td>${spendHtml}</td>
+            <td>${actionHtml}</td>
+          </tr>`;
+      }
+
+      tbody.innerHTML = html;
+    };
+    window.renderCampaignStatusTable = renderCampaignStatusTable;
+
+    /* -----------------------------------------------------------------
+     * Nút TẮT CHIẾN DỊCH — gọi Meta Graph API status=PAUSED
+     * ----------------------------------------------------------------- */
+    document
+      .getElementById("campaignStatusTableBody")
+      ?.addEventListener("click", async (e) => {
+        const btn = e.target.closest?.(".btn-pause-campaign");
+        if (!btn) return;
+        const cid = btn.getAttribute("data-campaign-id");
+        const cname = btn.getAttribute("data-campaign-name") || cid;
+        const action = btn.getAttribute("data-action") || "pause";
+        const token = document.getElementById("tokenInput")?.value || "";
+        if (!cid) return;
+        if (!token) {
+          alert("⚠️ Thiếu Access Token — hãy LẤY TOKEN TỰ ĐỘNG trước khi tắt chiến dịch.");
+          return;
+        }
+        const isPause = action === "pause";
+        const confirmMsg = isPause
+          ? `⛔ Xác nhận TẮT chiến dịch:\n\n${cname}\n\nTất cả nhóm quảng cáo trong chiến dịch sẽ ngừng chạy.`
+          : `▶️ Xác nhận BẬT LẠI chiến dịch:\n\n${cname}\n\nCác nhóm quảng cáo sẽ chạy trở lại.`;
+        if (!confirm(confirmMsg)) return;
+
+        btn.disabled = true;
+        const oldHtml = btn.innerHTML;
+        btn.innerHTML = "⏳...";
+        try {
+          const res = await fetch(`https://graph.facebook.com/v20.0/${cid}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `status=${isPause ? "PAUSED" : "ACTIVE"}&access_token=${encodeURIComponent(token)}`,
+          });
+          const data = await res.json();
+          if (data.success) {
+            btn.innerHTML = isPause ? "✅ ĐÃ TẮT" : "✅ ĐÃ BẬT";
+            btn.style.background = isPause ? "#8c939d" : "#31a24c";
+            // Đồng bộ cache background để các bảng khác cập nhật
+            requestBackgroundScan(false);
+            setTimeout(() => renderCampaignStatusTable(), 1500);
+          } else {
+            btn.innerHTML = oldHtml;
+            btn.disabled = false;
+            alert(
+              "❌ Lỗi FB: " + (data.error ? data.error.message : "Chưa rõ lý do"),
+            );
+          }
+        } catch (err) {
+          btn.innerHTML = oldHtml;
+          btn.disabled = false;
+          alert("❌ Lỗi kết nối Facebook!");
+        }
+      });
+
+    // Nút làm mới bảng trạng thái chiến dịch
+    document
+      .getElementById("campaignStatusRefreshBtn")
+      ?.addEventListener("click", async () => {
+        const btn = document.getElementById("campaignStatusRefreshBtn");
+        const oldHtml = btn.innerHTML;
+        btn.innerHTML = "⏳ ĐANG QUÉT...";
+        btn.disabled = true;
+        try {
+          await requestBackgroundScan(true);
+          await renderCampaignStatusTable();
+        } finally {
+          btn.innerHTML = oldHtml;
+          btn.disabled = false;
+        }
+      });
 
     /* -----------------------------------------------------------------
      * Hàm quét (tay hoặc tự động) — luôn đi qua background
@@ -2483,6 +2717,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             /* bỏ qua */
           }
           renderScanFromCache("ACTIVE");
+          // 🚦 Bảng trạng thái chiến dịch (số ngày không hoạt động)
+          try {
+            renderCampaignStatusTable();
+          } catch (e) {
+            /* bỏ qua */
+          }
         }
       });
     } catch (e) {
@@ -2523,6 +2763,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // Tải cache lần đầu khi mở trang (không gọi API)
     setTimeout(() => renderScanFromCache("ACTIVE"), 800);
+    setTimeout(() => renderCampaignStatusTable(), 900);
 
     // ✅ Đồng hồ đếm ngược + nút quét tay đã được định nghĩa ở block "BẢNG 📊 CHỈ SỐ
     //    — ĐỌC TỪ CACHE" phía trên (dùng chung 1 nguồn quét background).
@@ -2584,6 +2825,14 @@ document.addEventListener("DOMContentLoaded", async () => {
                 maxPrice: "",
                 maxCpm: "",
               };
+              // Ngưỡng CHUNG hiện tại (đọc lúc render → luôn khớp ô apMax*)
+              // Dùng làm fallback khi nhóm chưa có cấu hình riêng.
+              const apGlobalMaxSpend =
+                parseFloat(document.getElementById("apMaxSpend")?.value) || 10000;
+              const apGlobalMaxPrice =
+                parseFloat(document.getElementById("apMaxPrice")?.value) || 12000;
+              const apGlobalMaxCpm =
+                parseFloat(document.getElementById("apMaxCpm")?.value) || 50000;
               const hieuQuaCount = window.getHieuQuaCount(
                 insights,
                 adset.optimization_goal,
@@ -2639,10 +2888,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             ${ruleStatusHtml} <td>
                 <div style="display: flex; gap: 4px; align-items: center; justify-content: center;">
-                    <input type="number" class="local-spend" title="Ngưỡng tiêu" placeholder="Tiền" style="width:60px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxSpend}">
-                    <input type="number" class="local-price" title="Giá mỗi kết quả (CPR/CPL/CPC)" placeholder="Giá" style="width:90px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxPrice ?? local.maxCpr}">
+                    <input type="number" class="local-spend" title="Ngưỡng tiêu" placeholder="Tiền" style="width:60px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxSpend || apGlobalMaxSpend}">
+                    <input type="number" class="local-price" title="Giá mỗi kết quả (CPR/CPL/CPC)" placeholder="Giá" style="width:90px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxPrice || local.maxCpr || apGlobalMaxPrice}">
                     ${apCpcInputHtml}
-                    <input type="number" class="local-cpm" title="Ngưỡng CPM" placeholder="CPM" style="width:60px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxCpm}">
+                    <input type="number" class="local-cpm" title="Ngưỡng CPM" placeholder="CPM" style="width:60px; border: 1px solid #ddd; border-radius: 4px;" value="${local.maxCpm || apGlobalMaxCpm}">
                     <button class="btn-save-local" data-id="${adset.id}" style="padding: 4px 8px; font-size: 11px; cursor: pointer; background: #1877f2; color: #fff; border: none; border-radius: 4px;">Lưu</button>
                      <button
     class="btn-reset-local"
@@ -2818,12 +3067,61 @@ document.addEventListener("DOMContentLoaded", async () => {
         const ccEl = document.getElementById(ccMap[inpId]);
         if (ccEl && ccEl.value !== el.value) ccEl.value = el.value;
         ccEl?.dispatchEvent(new Event("change", { bubbles: true }));
-        if (typeof window.careCampRefreshThresholds === "function") {
-          window.careCampRefreshThresholds();
-        }
+        // (K) LAN NGƯỠNG CHUNG xuống các nhóm CHƯA TỰ ĐẶT ngưỡng riêng
+        //     (debounce để không ghi storage liên tục khi đang gõ).
+        scheduleApplyGlobalThresholds();
       });
     }
   });
+
+  /**
+   * (K) LAN NGƯỠNG CHUNG xuống các nhóm chưa tự đặt ngưỡng riêng.
+   *
+   * Debounce 400ms: user đang gõ → chỉ ghi 1 lần khi ngừng.
+   * Nhóm có cờ `__custom` (đã tay đặt) → giữ nguyên.
+   */
+  let applyGlobalTimer = null;
+  function scheduleApplyGlobalThresholds() {
+    if (applyGlobalTimer) clearTimeout(applyGlobalTimer);
+    applyGlobalTimer = setTimeout(async () => {
+      applyGlobalTimer = null;
+      try {
+        const core = window.CampCore;
+        if (!core?.applyGlobalThresholdsToGroups) return;
+        const res = await core.applyGlobalThresholdsToGroups({
+          maxSpend:
+            parseFloat(document.getElementById("apMaxSpend")?.value) || 10000,
+          maxPrice:
+            parseFloat(document.getElementById("apMaxPrice")?.value) || 12000,
+          maxCpm:
+            parseFloat(document.getElementById("apMaxCpm")?.value) || 50000,
+          maxCpc:
+            parseFloat(document.getElementById("apMaxCpc")?.value) || 800,
+        });
+        if (res?.updated > 0) {
+          // Đồng bộ RAM + localStorage để các bảng khác thấy ngay.
+          const cfg = await core.getConfigs();
+          window.localConfigs = { ...(window.localConfigs || {}), ...cfg };
+          try {
+            localStorage.setItem(
+              "fb_local_configs",
+              JSON.stringify(window.localConfigs || {}),
+            );
+          } catch (e) {
+            /* bỏ qua */
+          }
+          // Render lại bảng Chỉ Số để ô "Giá"/"CPM" hiện đúng ngưỡng chung.
+          try {
+            window.renderScanFromCache?.("ACTIVE");
+          } catch (e) {
+            /* bỏ qua */
+          }
+        }
+      } catch (e) {
+        console.warn("[Dashboard] Không lan được ngưỡng chung:", e);
+      }
+    }, 400);
+  }
 
   document.getElementById("btn-start-ap")?.addEventListener("click", () => {
     const checkedBoxes = document.querySelectorAll(".ap-checkbox:checked");

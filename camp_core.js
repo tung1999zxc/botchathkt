@@ -845,38 +845,218 @@
   /* ------------------------------------------------------------------
    * LẤY DỮ LIỆU ADSETS CHO 1 TÀI KHOẢN
    * ---------------------------------------------------------------- */
+
+  /** Cache tên tài khoản trong RAM (tránh gọi API lặp lại mỗi vòng quét) */
+  const _accNameCache = new Map();
+
+  /**
+   * Lấy tên tài khoản (có cache trong RAM — chỉ 1 API call / tài khoản).
+   */
+  async function getAccountName(token, accountId) {
+    const key = String(accountId);
+    if (_accNameCache.has(key)) return _accNameCache.get(key);
+    let name = accountId;
+    try {
+      const res = await graphGet(
+        `${GRAPH}/${accountId}?fields=name&access_token=${encodeURIComponent(token)}`,
+      );
+      if (!res?.error && res?.name) name = res.name;
+    } catch (e) {
+      /* bỏ qua */
+    }
+    _accNameCache.set(key, name);
+    return name;
+  }
+
+  /**
+   * Lấy danh sách CHIẾN DỊCH ĐANG BẬT của 1 tài khoản.
+   *
+   * ⚠️ KHÔNG lấy `insights` ở đây (chỉ cần id + tên + trạng thái) → rất rẻ.
+   *
+   * 🔒 FALLBACK: nếu API từ chối tham số `filtering` → gọi lại KHÔNG filter
+   *    rồi lọc tay trong JS (đảm bảo luôn lấy được danh sách CD đang bật).
+   *
+   * ⚠️ "ĐANG BẬT" = các trạng thái: ACTIVE, WITH_ISSUES, IN_PROCESS
+   *    (chiến dịch đang chạy nhưng có cảnh báo / đang xử lý).
+   *
+   * @param {string} token
+   * @param {string} accountId
+   * @returns {Promise<Array>} [{ campaignId, campaignName, status }]
+   */
+  async function fetchActiveCampaigns(token, accountId) {
+    const out = [];
+    const ACTIVE_STATES = ["ACTIVE", "WITH_ISSUES", "IN_PROCESS"];
+    try {
+      const filtering = encodeURIComponent(
+        JSON.stringify([
+          { field: "effective_status", operator: "IN", value: ["ACTIVE"] },
+        ]),
+      );
+      const baseUrl =
+        `${GRAPH}/${accountId}/campaigns?fields=id,name,effective_status,status&limit=500`;
+      let data = await graphGet(
+        `${baseUrl}&filtering=${filtering}&access_token=${encodeURIComponent(token)}`,
+      );
+      // Fallback: API từ chối filtering → lấy tất cả rồi lọc tay
+      if (data?.error) {
+        console.warn(
+          `[CAMP CORE] ⚠️ Filter campaigns bị từ chối (${data.error.message}) → lấy tất cả.`,
+        );
+        data = await graphGet(
+          `${baseUrl}&access_token=${encodeURIComponent(token)}`,
+        );
+      }
+      if (data?.error) {
+        console.warn(
+          `[CAMP CORE] ⚠️ Không lấy được campaigns của ${accountId}: ${data.error.message}`,
+        );
+        return out;
+      }
+      if (!data?.data?.length) {
+        // ⚠️ Filter campaigns trả RỖNG (không phải lỗi) → có thể filter sai
+        //    → thử gọi KHÔNG filter để chắc chắn lấy được CD đang bật.
+        console.warn(
+          `[CAMP CORE] ⚠️ Filter campaigns trả về 0 → thử lấy tất cả.`,
+        );
+        data = await graphGet(
+          `${baseUrl}&access_token=${encodeURIComponent(token)}`,
+        );
+        if (data?.error) return out;
+      }
+      for (const camp of data?.data || []) {
+        const st = String(
+          camp.effective_status || camp.status || "",
+        ).toUpperCase();
+        // Bỏ chiến dịch đã xoá / lưu trữ
+        if (st === "DELETED" || st === "ARCHIVED") continue;
+        // Ưu tiên trạng thái "đang chạy"; nếu không có effective_status thì coi
+        // là ACTIVE (campaign mới tạo chưa có effective_status).
+        if (st && !ACTIVE_STATES.includes(st)) continue;
+        out.push({
+          campaignId: String(camp.id),
+          campaignName: camp.name || "",
+          status: camp.effective_status || camp.status || "",
+        });
+      }
+      console.log(
+        `[CAMP CORE] 📋 ${accountId}: ${out.length} chiến dịch đang bật.`,
+      );
+    } catch (e) {
+      console.warn(
+        `[CAMP CORE] ⚠️ Lỗi lấy campaigns ${accountId}: ${e?.message}`,
+      );
+    }
+    return out;
+  }
+
+  /**
+   * Quét ADSETS THUỘC CÁC CHIẾN DỊCH ĐANG BẬT của 1 tài khoản.
+   *
+   * ⚠️ CHỈ QUÉT CHIẾN DỊCH ĐANG BẬT (effective_status = ACTIVE) để tiết kiệm
+   *    API:
+   *      Bước 1: gọi /campaigns (không insights → rất rẻ) lấy ID các CD đang bật.
+   *      Bước 2: gọi /adsets với filter `campaign_id IN [ids đang bật]` →
+   *              Meta chỉ trả về nhóm thuộc các chiến dịch đó.
+   *
+   * 🔒 AN TOÀN (không bao giờ quét ra 0 nhóm do lọc sai):
+   *      - Nếu filter campaign_id bị API từ chối → fallback gọi /adsets KHÔNG
+   *        filter rồi lọc tay (luôn có dữ liệu).
+   *      - Nếu bước 1 (campaigns) lỗi hoặc rỗng → fallback gọi /adsets như
+   *        bản gốc (lọc effective_status) → KHÔNG bỏ sót nhóm nào.
+   *      - Lọc tay lần nữa trong vòng for để chắc chắn không lọt nhóm của CD tắt.
+   */
   async function fetchAdsetsForAccount(token, accountId, settings) {
     const statuses = ["ACTIVE", "PAUSED"];
-    const filtering = encodeURIComponent(
-      JSON.stringify([
-        { field: "effective_status", operator: "IN", value: statuses },
-      ]),
-    );
     const out = [];
 
     try {
-      const accData = await graphGet(
-        `${GRAPH}/${accountId}?fields=name&access_token=${encodeURIComponent(token)}`,
-      );
-      if (accData.error) {
-        out.push({
-          error: true,
-          accountId,
-          accountName: accountId,
-          errorMsg: accData.error.message,
-        });
-        return out;
-      }
-      const accountName = accData.name || accountId;
+      // ⭐ Dùng cache tên TK trong RAM (tiết kiệm 1 API call / TK / vòng quét)
+      const accountName = await getAccountName(token, accountId);
 
-      const url =
+      const baseUrl =
         `${GRAPH}/${accountId}/adsets?fields=name,optimization_goal,effective_status,status,` +
         `daily_budget,lifetime_budget,` +
         `campaign{id,name,effective_status,status},` +
         `insights.date_preset(today){spend,actions,clicks,impressions,cpm,inline_link_clicks,ctr,cpc,frequency,reach}&` +
-        `filtering=${filtering}&limit=500&access_token=${encodeURIComponent(token)}`;
-      const data = await graphGet(url);
-      if (data.error) {
+        `limit=500`;
+      const statusFilter = encodeURIComponent(
+        JSON.stringify([
+          { field: "effective_status", operator: "IN", value: statuses },
+        ]),
+      );
+
+      // ---- BƯỚC 1: Lấy CHIẾN DỊCH ĐANG BẬT (API rất rẻ, không insights) ----
+      // ⚠️ campaignsOk = true nghĩa là ĐÃ xác định chắc danh sách CD đang bật
+      //    (kể cả khi danh sách RỖNG) → khi đó áp dụng lọc NGHIÊM.
+      let activeCampaigns = [];
+      let campaignsOk = false;
+      try {
+        activeCampaigns = await fetchActiveCampaigns(token, accountId);
+        campaignsOk = true;
+      } catch (e) {
+        console.warn(
+          `[CAMP CORE] ⚠️ Không lấy được campaigns của ${accountId}: ${e?.message}`,
+        );
+      }
+
+      const activeCampaignIds = activeCampaigns.map((c) => c.campaignId);
+      const campaignMap = new Map(
+        activeCampaigns.map((c) => [c.campaignId, c]),
+      );
+
+      // ⚠️ KHÔNG có CD đang bật nào (đã xác định chắc) → không có gì để quét
+      if (campaignsOk && !activeCampaignIds.length) {
+        console.log(
+          `[CAMP CORE] ⏭️ ${accountId}: không có chiến dịch đang bật → không quét nhóm.`,
+        );
+        return out;
+      }
+
+      let data = null;
+
+      if (activeCampaignIds.length) {
+        // ---- BƯỚC 2a: quét adsets CHỈ thuộc CD đang bật (tối ưu API) ----
+        const campaignFilter = encodeURIComponent(
+          JSON.stringify([
+            {
+              field: "campaign_id",
+              operator: "IN",
+              value: activeCampaignIds.slice(0, 500),
+            },
+          ]),
+        );
+        data = await graphGet(
+          `${baseUrl}&filtering=${campaignFilter}&access_token=${encodeURIComponent(token)}`,
+        );
+        if (data?.error) {
+          console.warn(
+            `[CAMP CORE] ⚠️ Filter campaign_id bị từ chối (${data.error.message}) → fallback.`,
+          );
+          data = null;
+        } else if (!data?.data?.length) {
+          // ⚠️ API trả RỖNG (không phải lỗi) → có thể filter sai
+          //    → thử fallback để KHÔNG bỏ sót nhóm.
+          console.warn(
+            `[CAMP CORE] ⚠️ Filter campaign_id trả về 0 nhóm → fallback quét tất cả.`,
+          );
+          data = null;
+        }
+      } else {
+        console.log(
+          `[CAMP CORE] ⚠️ ${accountId}: không xác định được danh sách CD đang bật → quét tất cả nhóm và lọc tay theo trạng thái CD.`,
+        );
+      }
+
+      // ---- FALLBACK: quét tất cả nhóm (lọc effective_status) ----
+      // Dùng khi: filter campaign_id bị từ chối / trả 0 dòng.
+      // → luôn trả về dữ liệu, không bao giờ mất nhóm.
+      if (!data) {
+        data = await graphGet(
+          `${baseUrl}&filtering=${statusFilter}&access_token=${encodeURIComponent(token)}`,
+        );
+      }
+
+      if (data?.error) {
         out.push({
           error: true,
           accountId,
@@ -886,7 +1066,28 @@
         return out;
       }
 
-      for (const adset of data.data || []) {
+      const rawAdsets = data?.data || [];
+      console.log(
+        `[CAMP CORE] 📦 ${accountId}: quét được ${rawAdsets.length} nhóm (CD đang bật: ${activeCampaignIds.length}).`,
+      );
+
+      for (const adset of rawAdsets) {
+        const cid = String(adset.campaign?.id || "");
+        const campState = String(
+          adset.campaign?.effective_status || adset.campaign?.status || "",
+        ).toUpperCase();
+
+        // ⭐⭐ LỌC NGHIÊM: chỉ giữ nhóm thuộc chiến dịch ĐANG BẬT.
+        //   1) Nếu đã có danh sách CD đang bật (campaignsOk) → so với danh sách.
+        //   2) Nếu không xác định được danh sách → dùng trạng thái CD có sẵn
+        //      trong response (adset.campaign.effective_status) → MIỄN PHÍ,
+        //      không cần gọi API thêm, vẫn loại được CD đã tắt.
+        if (campaignsOk) {
+          if (!cid || !campaignMap.has(cid)) continue;
+        } else {
+          if (campState && campState !== "ACTIVE") continue;
+        }
+
         const ins = adset.insights ? adset.insights.data[0] : null;
         const metrics = {
           spend: num(ins?.spend, 0),
@@ -1116,6 +1317,73 @@
    * ------------------------------------------------------------------ */
 
   /**
+   * (K) LAN NGƯỠNG CHUNG xuống các nhóm CHƯA TỰ ĐẶT NGƯỠNG RIÊNG.
+   *
+   * VÌ SAO cần:
+   *   Ngưỡng chung (apMax* / ccMax*) và ngưỡng riêng từng nhóm (fb_local_configs)
+   *   là 2 nguồn độc lập. Khi user đổi ngưỡng chung, các nhóm dùng ngưỡng
+   *   chung vẫn phải hiển thị giá trị mới — nếu không, ô "Giá" ở bảng Chỉ Số
+   *   lệch với ô ngưỡng chung.
+   *
+   * ⚠️ CHỈ áp dụng cho nhóm CHƯA TỰ ĐẶT NGƯỠNG RIÊNG:
+   *   - Nhóm có cờ `__custom = true` (user đã TAY đặt ngưỡng riêng)
+   *     → GIỮ NGUYÊN, không đụng vào.
+   *   - Nhóm còn lại (chưa tự đặt, chỉ bị nâng tự động theo cơ chế chung)
+   *     → cập nhật theo ngưỡng chung mới.
+   *
+   * @param {object} globalCfg { maxSpend, maxPrice, maxCpm, maxCpc }
+   * @returns {Promise<{updated:number, kept:number}>}
+   */
+  async function applyGlobalThresholdsToGroups(globalCfg = {}) {
+    const g = {
+      maxSpend: num(globalCfg.maxSpend, 10000),
+      maxPrice: num(globalCfg.maxPrice, 12000),
+      maxCpm: num(globalCfg.maxCpm, 40000),
+      maxCpc: num(globalCfg.maxCpc, 800),
+    };
+    const configs = await getConfigs();
+    const ids = Object.keys(configs || {});
+    if (!ids.length) return { updated: 0, kept: 0 };
+
+    // (K) Lưu danh sách id cần cập nhật (nhóm chưa tự đặt ngưỡng riêng).
+    //     Chỉ quyết định ở đây, ghi ở bước dưới (đọc lại configs mới nhất).
+    const targets = ids.filter((id) => !configs[id]?.__custom);
+
+    // (K) Đọc LẠI configs ngay trước khi ghi → không ghi đè mất thay đổi
+    //     của raiseThresholdForAdset (nâng ngưỡng) chạy song song.
+    const latest = await getConfigs();
+    const next = { ...latest };
+    let updated = 0;
+    let kept = 0;
+    for (const id of ids) {
+      const cur = latest[id] || {};
+      // (K) User đã TAY đặt ngưỡng riêng → GIỮ NGUYÊN.
+      if (cur.__custom) {
+        kept++;
+        continue;
+      }
+      if (!targets.includes(id)) continue;
+      // (K) Nhóm chưa tự đặt → đồng bộ theo ngưỡng chung.
+      //     ⚠️ maxSpend riêng đã bị NÂNG tự động (theo số KQ mới) → KHÔNG
+      //        ghi đè maxSpend, chỉ đồng bộ ngưỡng GIÁ / CPM / CPC (các ngưỡng
+      //        "điều kiện" mà user nhìn thấy ở ô nhập).
+      next[id] = {
+        ...cur,
+        maxSpend: num(cur.maxSpend, g.maxSpend),
+        maxPrice: g.maxPrice,
+        maxCpm: g.maxCpm,
+        maxCpc: g.maxCpc,
+        originalMaxPrice: g.maxPrice,
+        originalMaxCpm: g.maxCpm,
+        originalMaxCpc: g.maxCpc,
+      };
+      updated++;
+    }
+    if (updated > 0) await setConfigs(next);
+    return { updated, kept };
+  }
+
+  /**
    * Đưa toàn bộ ngưỡng riêng từng nhóm về NGƯỠNG CHUNG.
    *
    * - `maxSpend` / `maxPrice` / `maxCpm` / `maxCpc` → về giá trị chung.
@@ -1163,6 +1431,9 @@
         originalMaxCpc: g.maxCpc,
         __day: today,
       };
+      // (K) Đã đưa về NGƯỠNG CHUNG → nhóm này không còn là "tự đặt riêng"
+      //     → xoá cờ __custom (nếu có).
+      delete next[id].__custom;
       count++;
     }
     if (count > 0) await setConfigs(next);
@@ -1444,7 +1715,20 @@
         const rows = await fetchAdsetsForAccount(token, id, settings);
         allRows.push(...rows);
       }
-      state.rows = allRows;
+      // 🔒 AN TOÀN: KHÔNG ghi đè cache bằng mảng RỖNG.
+      //    Nếu vì lý do gì đó không quét được nhóm nào → giữ nguyên cache cũ
+      //    để bảng không bị trống bất thường.
+      if (allRows.length > 0) {
+        state.rows = allRows;
+      } else {
+        const hasError = allRows.some((r) => r.error);
+        console.warn(
+          `[CAMP CORE] ⚠️ Quét ra 0 nhóm${hasError ? " (có lỗi API)" : ""} → giữ nguyên cache cũ (${state.rows?.length || 0} nhóm).`,
+        );
+        state.error = hasError
+          ? allRows.find((r) => r.error)?.errorMsg || "Không lấy được dữ liệu"
+          : state.error;
+      }
 
       // ---- 2. (G) NÂNG NGƯỠNG — 1 nguồn duy nhất ----
       // (H) Dùng `raiseCount` + `raiseChannel` của từng nhóm:
@@ -1839,6 +2123,8 @@
     rolloverDayIfNeeded,
     resetAllPrevMaps,
     resetConfigsToGlobal,
+    // (K) lan ngưỡng chung xuống các nhóm chưa tự đặt ngưỡng riêng
+    applyGlobalThresholdsToGroups,
     getDayStamp,
 
     // (H) kênh số — dùng để tách mốc so sánh theo nguồn số
@@ -1857,6 +2143,10 @@
     setState,
     getCcState,
     setCcState,
+    // tên tài khoản (cache RAM)
+    getAccountName,
+    // danh sách chiến dịch đang bật (dùng để lọc quét)
+    fetchActiveCampaigns,
     getAutoPauseState,
     setAutoPauseState,
     collectMonitored,

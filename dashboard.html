@@ -2524,6 +2524,44 @@
           </div>
         </div>
 
+        <!-- 🚦 BẢNG TRẠNG THÁI CHIẾN DỊCH (quét được + số ngày không hoạt động) -->
+        <div class="table-wrapper" id="campaignStatusWrap" style="margin-bottom: 16px;">
+          <div style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 8px;
+              ">
+            <h3 style="margin: 0; color: #8a3ab9; font-size: 15px; font-weight: bold;">
+              🚦 CHIẾN DỊCH QUÉT ĐƯỢC
+            </h3>
+            <button id="campaignStatusRefreshBtn" class="btn btn-purple" style="padding: 6px 12px; font-size: 12px;">
+              🔄 LÀM MỚI
+            </button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>TÀI KHOẢN</th>
+                <th>CHIẾN DỊCH</th>
+                <th>TRẠNG THÁI</th>
+                <th>NHÓM (CHẠY/TỔNG)</th>
+                <th>CHI TIÊU HÔM NAY</th>
+                <th>HÀNH ĐỘNG</th>
+              </tr>
+            </thead>
+            <tbody id="campaignStatusTableBody">
+              <tr>
+                <td colspan="6" style="text-align: center; color: #8c939d;">
+                  Chưa có dữ liệu — hãy bấm "QUÉT" để lấy dữ liệu chiến dịch.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         <div class="table-wrapper">
           <table>
             <thead>

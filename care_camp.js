@@ -319,8 +319,14 @@
     }
   }
 
-  /** Ghi ngưỡng riêng của 1 nhóm vào localConfigs (đồng bộ với bảng Chỉ Số) */
-  function saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm, maxCpc) {
+  /**
+   * Ghi ngưỡng riêng của 1 nhóm vào localConfigs (đồng bộ với bảng Chỉ Số)
+   *
+   * @param {boolean} [isCustom] true = user TAY đặt ngưỡng riêng cho nhóm này
+   *        → được đánh dấu `__custom` để KHÔNG bị cơ chế "lan ngưỡng chung"
+   *        ghi đè khi user đổi ngưỡng chung.
+   */
+  function saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm, maxCpc, isCustom) {
     const cfg = readConfigs();
     const id = String(adsetId);
     const old = cfg[id] || {};
@@ -339,8 +345,47 @@
       originalMaxCpm: old.originalMaxCpm || maxCpm,
       originalMaxCpc: old.originalMaxCpc || cpcVal,
     };
+    // (K) Đánh dấu "user đã tự đặt ngưỡng riêng" → cơ chế lan ngưỡng chung
+    //     sẽ KHÔNG ghi đè nhóm này.
+    if (isCustom === true) cfg[id].__custom = true;
+    else if (isCustom === false) delete cfg[id].__custom;
     writeConfigs(cfg);
     return cfg[id];
+  }
+
+  /**
+   * (K) LAN NGƯỠNG CHUNG xuống các nhóm CHƯA TỰ ĐẶT ngưỡng riêng.
+   *
+   * Dùng camp_core.js làm nguồn chuẩn (ghi vào chrome.storage.local để
+   * Service Worker cũng đọc được). Nhóm có cờ `__custom` (user đã tay đặt)
+   * → GIỮ NGUYÊN.
+   */
+  async function applyGlobalThresholdsToGroupsSafely() {
+    try {
+      const core = window.CampCore;
+      if (!core?.applyGlobalThresholdsToGroups) return;
+      const res = await core.applyGlobalThresholdsToGroups({
+        maxSpend: state.settings.maxSpend,
+        maxPrice: state.settings.maxPrice,
+        maxCpm: state.settings.maxCpm,
+        maxCpc: state.settings.maxCpc,
+      });
+      if (res?.updated > 0) {
+        // Đồng bộ lại vào RAM (window.localConfigs) để các bảng khác thấy.
+        const cfg = await core.getConfigs();
+        window.localConfigs = { ...(window.localConfigs || {}), ...cfg };
+        try {
+          localStorage.setItem(
+            CONFIGS_KEY,
+            JSON.stringify(window.localConfigs || {}),
+          );
+        } catch (e) {
+          /* bỏ qua */
+        }
+      }
+    } catch (e) {
+      console.warn("[CARE CAMP] Không lan được ngưỡng chung:", e);
+    }
   }
 
   /** Đồng bộ ngưỡng CHUNG giữa bảng Tắt Camp (ccMax*) và bảng Auto-Pause (apMax*) */
@@ -1053,7 +1098,7 @@
             <input type="number" class="cc-lim-price" placeholder="Giá" style="width:70px" value="${lim.maxPrice}" />
             ${state.settings.useCpcCombo ? `<input type="number" class="cc-lim-cpc" placeholder="CPC" title="Ngưỡng CPC (chế độ Kết hợp CPC)" style="width:58px;border:1px solid #e0a458;border-radius:4px" value="${lim.maxCpc}" />` : ""}
             <input type="number" class="cc-lim-cpm" placeholder="CPM" style="width:62px" value="${lim.maxCpm}" />
-            <button class="cc-btn-save" data-id="${esc(r.adsetId)}" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#1877f2;color:#fff;border:none;border-radius:4px">Lưu</button>
+             <button class="cc-btn-save" data-id="${esc(r.adsetId)}" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#1877f2;color:#fff;border:none;border-radius:4px">Giám sát</button>
             <button class="cc-btn-reset" data-id="${esc(r.adsetId)}" title="Reset về ngưỡng chung (QUY TẮC TỰ ĐỘNG TẮT NHÓM)" style="padding:4px 8px;font-size:11px;cursor:pointer;background:#fa383e;color:#fff;border:none;border-radius:4px">↺</button>
           </div>
         </td>
@@ -1950,19 +1995,38 @@
         `tr[data-adset="${CSS.escape(String(adsetId))}"]`,
       );
     if (!tr) return;
-    const maxSpend = num(tr.querySelector(".cc-lim-spend")?.value, 0);
-    const maxPrice = num(tr.querySelector(".cc-lim-price")?.value, 0);
-    const maxCpm = num(tr.querySelector(".cc-lim-cpm")?.value, 0);
+
+    // Đọc ô nhập — ô TRỐNG → lấy ngưỡng chung (KHÔNG ghi 0, vì 0 là số
+    // hữu hạn → phía quét sẽ coi là luôn vượt ngưỡng → nhóm bị tắt oan).
+    const readLim = (sel, fb) => {
+      const raw = (tr.querySelector(sel)?.value || "").trim();
+      if (raw === "") return fb;
+      const v = parseFloat(raw);
+      return Number.isFinite(v) ? v : fb;
+    };
+    const maxSpend = readLim(".cc-lim-spend", state.settings.maxSpend);
+    const maxPrice = readLim(".cc-lim-price", state.settings.maxPrice);
+    const maxCpm = readLim(".cc-lim-cpm", state.settings.maxCpm);
     // Ô CPC (chế độ "Kết hợp CPC") — có thể không tồn tại nếu đang ẩn.
     // Không có ô → giữ ngưỡng CPC đã lưu, chưa có thì lấy ngưỡng chung
     // (tránh ghi 0 → sau này bật combo sẽ luôn coi là vượt ngưỡng).
     const cpcInput = tr.querySelector(".cc-lim-cpc");
     const maxCpc = cpcInput
-      ? num(cpcInput.value, 0)
+      ? readLim(".cc-lim-cpc", state.settings.maxCpc)
       : readConfigs()[String(adsetId)]?.maxCpc ?? state.settings.maxCpc;
 
+    // (K) Nhóm này có còn là "ngưỡng RIÊNG do user tự đặt" không?
+    //     - maxSpend KHÔNG tính: nó được hệ thống nâng tự động theo số KQ mới.
+    //     - maxPrice / maxCpm / maxCpc: khác ngưỡng chung → user đã tay đặt.
+    const isCustom =
+      maxPrice !== state.settings.maxPrice ||
+      maxCpm !== state.settings.maxCpm ||
+      maxCpc !== state.settings.maxCpc;
+
     // 1. Ghi vào nguồn cấu hình chung (localStorage["fb_local_configs"])
-    saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm, maxCpc);
+    //    (K) isCustom → đánh dấu __custom để không bị cơ chế "lan ngưỡng
+    //    chung" ghi đè. Ngược lại → xoá cờ (nhóm bám theo ngưỡng chung).
+    saveConfigFor(adsetId, maxSpend, maxPrice, maxCpm, maxCpc, isCustom);
 
     // 2. Đồng bộ bản sao trong state.monitored (để tương thích dữ liệu cũ)
     let m = state.monitored.find((x) => String(x.adsetId) === String(adsetId));
@@ -2061,7 +2125,9 @@
     };
 
     // Ghi vào nguồn cấu hình chung (localStorage["fb_local_configs"])
-    saveConfigFor(adsetId, g.maxSpend, g.maxPrice, g.maxCpm, g.maxCpc);
+    // (K) Reset về ngưỡng chung → nhóm này KHÔNG còn là "tự đặt riêng"
+    //     → xoá cờ __custom để nó lại bám theo ngưỡng chung.
+    saveConfigFor(adsetId, g.maxSpend, g.maxPrice, g.maxCpm, g.maxCpc, false);
 
     // Đồng bộ luôn "giá trị gốc" để nút Reset ở bảng Chỉ Số cũng trở về ngưỡng chung
     const cfg = readConfigs();
@@ -2315,7 +2381,17 @@
       syncGlobalThreshold("maxCpc", state.settings.maxCpc);
       syncCplHint();
       await saveState(true);
+      // (K) LAN NGƯỠNG CHUNG xuống các nhóm CHƯA TỰ ĐẶT ngưỡng riêng.
+      //     Nhóm user đã tay đặt (có cờ __custom) → giữ nguyên.
+      await applyGlobalThresholdsToGroupsSafely();
       renderAll();
+      // (K) Render lại bảng Chỉ Số (dashboard.js) để ô "Giá"/"CPM" hiện
+      //     đúng ngưỡng chung vừa đổi.
+      try {
+        window.renderScanFromCache?.("ACTIVE");
+      } catch (e) {
+        /* bỏ qua */
+      }
       if (!silent) {
         toast(
           `💾 Đã lưu ngưỡng: chi tiêu ${money(state.settings.maxSpend)} đ · giá ${money(state.settings.maxPrice)} đ` +

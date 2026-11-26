@@ -481,12 +481,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // 🔧 CAMP CORE — API cho dashboard
   // ============================================================
   // 📊 Bảng Chỉ Số / ✂️ Tắt Camp: quét tay → nhờ background quét (1 nguồn duy nhất)
+  // (J) `readOnly: true` → chỉ đọc chỉ số: KHÔNG nâng ngưỡng, KHÔNG tắt/bật.
   if (message?.type === "camp-core-scan") {
     if (!self.CampCore) {
       sendResponse({ ok: false, error: "CampCore chưa nạp" });
       return true;
     }
-    self.CampCore.runScan({ manual: true })
+    self.CampCore
+      .runScan({
+        manual: message.manual !== false,
+        readOnly: !!message.readOnly,
+      })
       .then((result) => sendResponse(result))
       .catch((error) =>
         sendResponse({ ok: false, error: error?.message || "unknown" }),

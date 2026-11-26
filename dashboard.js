@@ -1451,7 +1451,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       renderActList();
     });
 
-    actConfirmBtn?.addEventListener("click", () => {
+    actConfirmBtn?.addEventListener("click", async () => {
       const ids = getActCheckedIds();
       if (!ids.length) return alert("⚠️ Chưa chọn TKQC nào!");
       if (ids.length > MAX_ACT_SELECT)
@@ -1466,14 +1466,32 @@ document.addEventListener("DOMContentLoaded", async () => {
       const merged = [...kept, ...ids.map((id) => `act_${id}`)];
       input.value = merged.join(",\n");
       selectActModal.style.display = "none";
-      // Lưu luôn vào storage (không cần bấm LƯU CẤU HÌNH)
-      chrome.storage.local.set(
-        {
-          fbToken: document.getElementById("tokenInput").value,
-          fbIds: input.value,
-        },
-        () => {},
-      );
+
+      // ✅ ĐIỀU KIỆN 3: kiểm tra Token TRƯỚC khi quét.
+      //    Không có token → không thể gọi API Facebook → không quét.
+      const token = (document.getElementById("tokenInput")?.value || "").trim();
+      if (!token) {
+        return alert(
+          "⚠️ Vui lòng Lấy Token trước khi chọn TKQC!\n\n(Bấm nút LẤY TOKEN ở phía trên để lấy token cho tài khoản VIA.)",
+        );
+      }
+
+      // ✅ ĐIỀU KIỆN 1: ĐỢI storage ghi XONG rồi mới yêu cầu background quét.
+      //    (Nếu không, background có thể đọc storage cũ → quét sai tài khoản.)
+      try {
+        await new Promise((resolve) =>
+          chrome.storage.local.set(
+            {
+              fbToken: token,
+              fbIds: input.value,
+            },
+            resolve,
+          ),
+        );
+      } catch (e) {
+        console.error("Lỗi lưu cấu hình TKQC:", e);
+        return alert("⚠️ Lỗi lưu cấu hình, không thể quét. Thử lại!");
+      }
       if (fetchAllActBtn)
         window.setBtnLabel(
           fetchAllActBtn,
@@ -1485,6 +1503,24 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (fetchAllActBtn)
           window.setBtnLabel(fetchAllActBtn, "CHỌN TKQC CỦA VIA", "⏬");
       }, 3000);
+
+      // ✅ ĐIỀU KIỆN 2: yêu cầu background quét NGAY (chỉ đọc).
+      //    - KHÔNG nâng ngưỡng, KHÔNG gửi Telegram, KHÔNG tắt/bật nhóm.
+      //    - Nhóm chưa có mốc → ghi "mốc nền = 0".
+      //    Listener "camp-core-updated" sẽ tự render bảng khi quét xong.
+      try {
+        const loadingEl = document.getElementById("loading");
+        if (loadingEl) loadingEl.style.display = "block";
+        chrome.runtime?.sendMessage?.(
+          { type: "camp-core-scan", manual: true, readOnly: true },
+          () => void chrome.runtime?.lastError,
+        );
+        console.log(
+          `🔄 Đã yêu cầu background quét (chỉ đọc) ${ids.length} TKQC...`,
+        );
+      } catch (e) {
+        console.error("Lỗi yêu cầu background quét:", e);
+      }
     });
 
     // Filter trạng thái
@@ -2052,9 +2088,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       const billingList = document.getElementById("billingList");
       if (!tableBody) return;
 
-      if (targetStatus === "ACTIVE") tableBody.innerHTML = "";
-      else if (pausedTableBody) pausedTableBody.innerHTML = "";
-      if (billingList) billingList.innerHTML = "";
+      // ⭐ BUFFER HTML — chỉ gán vào DOM 1 lần ở cuối hàm (atomic).
+      //    Lý do: trước đây hàm xoá DOM (`innerHTML = ""`) → await dữ liệu →
+      //    rồi `innerHTML +=`. Khi 2 luồng render chạy SONG SONG (nút quét +
+      //    listener "camp-core-updated"), cả 2 đều xoá DOM trước khi ghi →
+      //    kết quả dữ liệu bị NHÂN ĐÔI.
+      //    Cách sửa: dựng toàn bộ HTML vào buffer string, gán 1 lần duy nhất.
+      let rowsHtml = "";
+      let pausedRowsHtml = "";
+      let billingHtml = "";
 
       const core = await fetchCoreState();
       if (!core) {
@@ -2245,7 +2287,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 ? parseFloat(insights.frequency).toFixed(2).replace(".", ",")
                 : "0,00";
 
-              tableBody.innerHTML += `
+              rowsHtml += `
         <tr>
             ${actionButton}
             <td style="font-size:11px; color:#606770">${accountName}</td>
@@ -2269,7 +2311,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         </tr>
     `;
             } else if (pausedTableBody) {
-              pausedTableBody.innerHTML += `<tr>${actionButton}<td style="font-size:12px; font-weight:bold;">${adset.name}</td><td class="metric" style="color:#d97706">${spendStr}</td><td><span style="color:#31a24c; font-weight:bold;">${effectiveCount}</span></td>${configCol}</tr>`;
+              pausedRowsHtml += `<tr>${actionButton}<td style="font-size:12px; font-weight:bold;">${adset.name}</td><td class="metric" style="color:#d97706">${spendStr}</td><td><span style="color:#31a24c; font-weight:bold;">${effectiveCount}</span></td>${configCol}</tr>`;
             }
           }
 
@@ -2339,7 +2381,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
           const directBillingUrl = `https://www.facebook.com/ads/manager/billing/transactions/?act=${rawAccountId}`;
           if (billingList) {
-            billingList.innerHTML += `
+            billingHtml += `
                     <div class="billing-item" style="flex-wrap: wrap;">
                         <div style="flex: 1; min-width: 120px;">
                             <span style="font-size:11px; color:#606770">${accountName}</span>
@@ -2357,6 +2399,12 @@ document.addEventListener("DOMContentLoaded", async () => {
           console.error("Lỗi render dòng ID:", id, e);
         }
       }
+
+      // ⭐ GÁN 1 LẦN DUY NHẤT (atomic) — chống nhân đôi khi 2 luồng render
+      //    chạy song song. Gán (ghi đè) chứ không phải += (cộng dồn).
+      if (targetStatus === "ACTIVE") tableBody.innerHTML = rowsHtml;
+      else if (pausedTableBody) pausedTableBody.innerHTML = pausedRowsHtml;
+      if (billingList) billingList.innerHTML = billingHtml;
 
       document.getElementById("loading").style.display = "none";
     };
@@ -2385,7 +2433,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       // ⭐ NGUỒN QUÉT DUY NHẤT: background
       await requestBackgroundScan(true);
-      await renderScanFromCache(targetStatus);
+
+      // ⭐ KHÔNG render trùng ở đây.
+      //    Bảng "ĐANG CHẠY" sẽ được listener "camp-core-updated" render
+      //    (chạy ngay sau khi background báo xong quét).
+      //    Bảng "ĐÃ TẮT" thì listener KHÔNG lo → vẫn render thủ công ở đây.
+      if (targetStatus === "PAUSED") {
+        await renderScanFromCache("PAUSED");
+      }
     };
 
     /* -----------------------------------------------------------------

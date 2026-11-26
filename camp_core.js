@@ -316,10 +316,15 @@
    *
    * @param {string} adsetId
    * @param {number} effectiveCount  số KQ hiện tại (hội thoại / click / CPR)
-   * @param {object} opts { maxSpend, maxPrice, maxCpm, maxCpc, channel }
+   * @param {object} opts { maxSpend, maxPrice, maxCpm, maxCpc, channel, readOnly }
    * @param {string} [opts.channel] Kênh số: "inbox" | "messages" | "click"
    *   - Bỏ trống → dùng map legacy ("camp_core_prev") (tương thích cũ).
    *   - "unknown" → KHÔNG nâng ngưỡng, KHÔNG ghi mốc (chỉ biết là chưa xác định).
+   * @param {boolean} [opts.readOnly] CHẾ ĐỘ CHỈ ĐỌC:
+   *   - KHÔNG nâng ngưỡng, KHÔNG ghi log nâng, KHÔNG gửi Telegram.
+   *   - Nhóm CHƯA có mốc → ghi "mốc nền" = 0 (để lần quét thật sau coi
+   *     mốc cũ = 0 và nâng theo toàn bộ KQ, giống hành vi sang ngày mới).
+   *   - Nhóm ĐÃ có mốc → giữ nguyên mốc cũ (không ghi đè).
    * @returns {Promise<{raised:boolean, diff:number, currentMaxSpend:number, newMaxSpend:number}>}
    */
   async function raiseThresholdForAdset(adsetId, effectiveCount, opts = {}) {
@@ -423,6 +428,46 @@
     //     của ngày mới (giống hành vi "lần đầu bật CPL").
     const hasPrev = !prevReset && prevMap[id] !== undefined;
     const prev = hasPrev ? num(prevMap[id], 0) : 0;
+
+    // (J) CHẾ ĐỘ CHỈ ĐỌC (readOnly) — dùng cho lần quét "xem chỉ số" khi
+    //     user vừa chọn TKQC: KHÔNG nâng ngưỡng, KHÔNG gửi Telegram.
+    //
+    //     - Nhóm CHƯA có mốc → ghi "mốc nền" = 0.
+    //       → Lần quét THẬT sau coi mốc cũ = 0 → nâng ngưỡng theo TOÀN BỘ
+    //         KQ đang có (giống hành vi "sang ngày mới").
+    //     - Nhóm ĐÃ có mốc → GIỮ NGUYÊN mốc cũ (không ghi đè), để lần
+    //       quét thật sau vẫn thấy phần tăng và nâng đúng 1 lần.
+    if (opts.readOnly) {
+      if (!hasPrev) {
+        prevMap[id] = 0;
+        await setPrevMap(prevMap, channel);
+        const curLocal = configs[id] || {};
+        const curMaxSpend = num(curLocal.maxSpend, globalMaxSpend);
+        return {
+          raised: false,
+          diff: 0,
+          seeded: true,
+          currentMaxSpend: curMaxSpend,
+          newMaxSpend: curMaxSpend,
+          currentMaxPrice: globalMaxPrice,
+          currentMaxCpm: globalMaxCpm,
+          currentMaxCpc: globalMaxCpc,
+        };
+      }
+      // Đã có mốc → không đụng vào mốc, không nâng ngưỡng.
+      const curLocal = configs[id] || {};
+      const curMaxSpend = num(curLocal.maxSpend, globalMaxSpend);
+      return {
+        raised: false,
+        diff: 0,
+        readOnly: true,
+        currentMaxSpend: curMaxSpend,
+        newMaxSpend: curMaxSpend,
+        currentMaxPrice: globalMaxPrice,
+        currentMaxCpm: globalMaxCpm,
+        currentMaxCpc: globalMaxCpc,
+      };
+    }
 
     // KQ không tăng (và đã có mốc) → không nâng
     if (hasPrev && cur <= prev) {
@@ -1276,8 +1321,16 @@
   /**
    * Quét toàn bộ: đọc chỉ số → nâng ngưỡng (G) → tắt/bật (F) → ghi cache.
    * Đây là NGUỒN QUÉT DUY NHẤT của hệ thống.
+   *
+   * @param {object} opts
+   * @param {boolean} [opts.manual]  true = quét tay (bấm nút).
+   * @param {boolean} [opts.readOnly] true = CHỈ ĐỌC chỉ số:
+   *   - KHÔNG nâng ngưỡng (bước 2) — nhóm chưa có mốc sẽ được ghi "mốc nền = 0".
+   *   - KHÔNG tắt/bật nhóm (bước 3 & 4).
+   *   - Dùng cho lần quét "xem chỉ số" khi user vừa chọn TKQC.
    */
   async function runScan(opts = {}) {
+    const READ_ONLY = !!opts.readOnly;
     if (_scanInFlight) {
       console.log("[CAMP CORE] Đang quét → bỏ qua lần này (chống chồng).");
       return { ok: false, skipped: true };
@@ -1410,6 +1463,8 @@
             maxCpm: settings.maxCpm,
             maxCpc: settings.maxCpc,
             channel: row.raiseChannel || "",
+            // (J) readOnly → KHÔNG nâng ngưỡng, chỉ ghi mốc nền nếu chưa có.
+            readOnly: READ_ONLY,
           },
         );
         if (res2.skipped) {
@@ -1420,8 +1475,14 @@
         }
         if (res2.seeded) {
           console.log(
-            `📌 [CAMP CORE] Mốc nền nhóm ${row.name}: ${row.raiseCount} HT.`,
+            READ_ONLY
+              ? `📌 [CAMP CORE] (chỉ đọc) Đã đặt mốc nền = 0 cho nhóm ${row.name} — lần quét thật sau sẽ nâng theo toàn bộ KQ.`
+              : `📌 [CAMP CORE] Mốc nền nhóm ${row.name}: ${row.raiseCount} HT.`,
           );
+          continue;
+        }
+        if (res2.readOnly) {
+          // (J) readOnly + nhóm ĐÃ có mốc → giữ nguyên mốc cũ, không nâng.
           continue;
         }
         if (res2.raised) {
@@ -1442,11 +1503,13 @@
       }
 
       // ---- 3. (F) TẮT NHÓM VƯỢT NGƯỠNG — 1 nguồn quyết định duy nhất ----
+      // (J) readOnly → BỎ QUA bước tắt/bật: lần quét "xem chỉ số" không
+      //     được đụng vào trạng thái nhóm quảng cáo trên Facebook.
       let paused = 0;
       let resumed = 0;
       const newlyPaused = [];
 
-      if (monitored.length > 0) {
+      if (!READ_ONLY && monitored.length > 0) {
         for (const m of monitored) {
           const row = allRows.find(
             (r) => String(r.adsetId) === String(m.adsetId),
@@ -1553,8 +1616,9 @@
       }
 
       // ---- 4. BẬT LẠI NHÓM ĐÃ TẮT TỰ ĐỘNG ----
+      // (J) readOnly → BỎ QUA bước bật lại (không đụng trạng thái FB).
       const ccState2 = await getCcState();
-      for (const p of ccState2.autoPaused) {
+      for (const p of READ_ONLY ? [] : ccState2.autoPaused) {
         const row = allRows.find(
           (r) => String(r.adsetId) === String(p.adsetId),
         );
@@ -1694,10 +1758,12 @@
       }
 
       console.log(
-        `[CAMP CORE] ✅ Quét xong trong ${Date.now() - startedAt}ms — ` +
-          `${allRows.length} nhóm · tắt ${paused} · bật lại ${resumed}`,
+        READ_ONLY
+          ? `[CAMP CORE] ✅ Quét xong (CHỈ ĐỌC) trong ${Date.now() - startedAt}ms — ${allRows.length} nhóm · không nâng ngưỡng, không tắt/bật`
+          : `[CAMP CORE] ✅ Quét xong trong ${Date.now() - startedAt}ms — ` +
+            `${allRows.length} nhóm · tắt ${paused} · bật lại ${resumed}`,
       );
-      return { ok: true, rows: allRows.length, paused, resumed };
+      return { ok: true, rows: allRows.length, paused, resumed, readOnly: READ_ONLY };
     } catch (e) {
       state.error = e?.message || String(e);
       state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;

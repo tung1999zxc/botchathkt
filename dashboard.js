@@ -1598,8 +1598,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     // ==========================================
     // LOGIC CHUẨN: TÍNH THUẾ 10% VÀO TIỀN TIÊU
     // ==========================================
-    document.getElementById("updateMoneyBtn")?.addEventListener("click", () => {
-      const inputs = document.querySelectorAll(".prepay-input");
+    // Lưu hàng loạt (dùng cho nút "CẬP NHẬT TIỀN NẠP")
+    const savePrepayBulk = (inputs, { silent = true } = {}) => {
       let newData = {};
 
       inputs.forEach((input) => {
@@ -1623,11 +1623,119 @@ document.addEventListener("DOMContentLoaded", async () => {
       chrome.storage.local.get(["prepayData"], (res) => {
         let mergedData = { ...(res.prepayData || {}), ...newData };
         chrome.storage.local.set({ prepayData: mergedData }, () => {
-          alert(
-            "✅ Đã lưu Tiền Nạp & Cập nhật số dư (Công thức: Nạp - [Tiêu * 1.1])!",
-          );
+          if (silent) {
+            showPrepayToast(
+              `✅ Đã lưu ${Object.keys(newData).length} tài khoản`,
+              true,
+            );
+          } else {
+            alert(
+              "✅ Đã lưu Tiền Nạp & Cập nhật số dư (Công thức: Nạp - [Tiêu * 1.1])!",
+            );
+          }
         });
       });
+    };
+
+    document.getElementById("updateMoneyBtn")?.addEventListener("click", () => {
+      savePrepayBulk(document.querySelectorAll(".prepay-input"), {
+        silent: false,
+      });
+    });
+
+    // ==========================================
+    // Tự động lưu tiền nạp khi click ra ngoài ô nhập
+    // ==========================================
+    let prepayToastTimer = null;
+    const showPrepayToast = (message, ok = true) => {
+      try {
+        let el = document.getElementById("prepayAutoSaveToast");
+        if (!el) {
+          el = document.createElement("div");
+          el.id = "prepayAutoSaveToast";
+          el.style.cssText =
+            "position:fixed;right:16px;bottom:16px;z-index:99999;" +
+            "padding:10px 14px;border-radius:8px;font-size:13px;font-weight:600;" +
+            "box-shadow:0 4px 14px rgba(0,0,0,.18);pointer-events:none;" +
+            "transition:opacity .25s ease;max-width:320px;";
+          document.body.appendChild(el);
+        }
+        el.textContent = message;
+        el.style.background = ok ? "#31a24c" : "#fa383e";
+        el.style.color = "#fff";
+        el.style.opacity = "1";
+        clearTimeout(prepayToastTimer);
+        prepayToastTimer = setTimeout(() => {
+          el.style.opacity = "0";
+        }, 1800);
+      } catch (e) {
+        /* bỏ qua */
+      }
+    };
+
+    const savePrepayInput = (input, silent = true) => {
+      const id = input?.getAttribute?.("data-id");
+      if (!id) return;
+
+      const raw = (input.value || "").trim();
+      const val = parseFloat(raw);
+      const todaySpend = parseFloat(input.getAttribute("data-spend")) || 0;
+      const isValid = raw !== "" && !isNaN(val) && val >= 0;
+
+      chrome.storage.local.get(["prepayData"], (res) => {
+        const mergedData = { ...(res?.prepayData || {}) };
+
+        if (isValid) mergedData[id] = val;
+        else delete mergedData[id];
+
+        chrome.storage.local.set({ prepayData: mergedData }, () => {
+          // Cập nhật số dư hiển thị ngay (LÕI CHUẨN: Nạp - [Tiêu * 1.1])
+          const balEl = document.getElementById(`bal-${id}`);
+          if (balEl) {
+            if (isValid) {
+              const calcBalance = val - todaySpend * 1.1;
+              balEl.innerText =
+                new Intl.NumberFormat("vi-VN").format(
+                  Math.round(calcBalance),
+                ) + " đ";
+              balEl.style.color = calcBalance < 0 ? "#fa383e" : "#31a24c";
+            } else {
+              balEl.innerText = "Nhập tiền ->";
+              balEl.style.color = "#8c939d";
+            }
+          }
+
+          if (!silent) {
+            alert(
+              isValid
+                ? "✅ Đã lưu Tiền Nạp & Cập nhật số dư (Công thức: Nạp - [Tiêu * 1.1])!"
+                : "🗑️ Đã xoá tiền nạp của tài khoản này.",
+            );
+          } else {
+            showPrepayToast(
+              isValid
+                ? `✅ Đã lưu tiền nạp: ${new Intl.NumberFormat("vi-VN").format(val)} đ`
+                : "🗑️ Đã xoá tiền nạp",
+              isValid,
+            );
+          }
+        });
+      });
+    };
+
+    // Dùng event delegation vì #billingList được vẽ lại (innerHTML) mỗi lần quét
+    const billingListEl = document.getElementById("billingList");
+    billingListEl?.addEventListener("focusout", (e) => {
+      const input = e.target?.closest?.(".prepay-input");
+      if (input) savePrepayInput(input);
+    });
+    billingListEl?.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const input = e.target?.closest?.(".prepay-input");
+      if (input) {
+        e.preventDefault();
+        input.blur(); // blur => tự động lưu
+      }
     });
 
     function getCleanIds(rawString) {
@@ -1671,6 +1779,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       // Lặp qua từng ID admin để gửi tin nhắn
+      let sent = 0;
+      let lastError = "";
       for (const chatId of ADMIN_CHAT_ID) {
         try {
           const response = await fetch(url, {
@@ -1684,17 +1794,32 @@ document.addEventListener("DOMContentLoaded", async () => {
           });
 
           if (!response.ok) {
+            let detail = "";
+            try {
+              const data = await response.clone().json();
+              detail = data && data.description ? data.description : "";
+            } catch (e) {}
+            lastError = `HTTP ${response.status}${detail ? ": " + detail : ""}`;
             console.error(
               `❌ Lỗi gửi tin nhắn đến ID ${chatId}:`,
               response.statusText,
+              detail,
             );
           } else {
+            sent++;
             console.log(`✅ Đã gửi cảnh báo thành công tới ID ${chatId}`);
           }
         } catch (error) {
+          lastError = error?.message || String(error);
           console.error("❌ Lỗi kết nối API Telegram:", error);
         }
       }
+      return {
+        ok: sent > 0,
+        sent,
+        total: ADMIN_CHAT_ID.length,
+        error: sent > 0 ? "" : lastError,
+      };
     }
 
     // ✅ Xuất ra window để các module khác (care_camp.js…) gọi được
@@ -1931,7 +2056,41 @@ document.addEventListener("DOMContentLoaded", async () => {
         .prepayData || {};
 
       // Gom nhóm theo tài khoản (để hiển thị quỹ + cảnh báo tiền)
+      //
+      // ⚠️ NGUỒN SỰ THẬT = DANH SÁCH TK ĐÃ CHỌN (fbIds trong storage),
+      //    KHÔNG phải "row đã quét được".
+      //    Lý do: nếu dựng từ rows thì TK lỗi API / TK không có adset nào
+      //    sẽ biến mất khỏi #billingList (đúng triệu chứng user báo).
+      //    Bản cũ (trước khi gộp camp_core.js) duyệt trực tiếp ids đã chọn
+      //    → luôn hiện đủ. Nay seed trước danh sách đã chọn, rồi mới ghi đè
+      //    bằng dữ liệu thật từ cache.
       const byAccount = new Map();
+
+      // 1) Seed: mọi TK đã chọn đều có mặt (kể cả khi không có adset / lỗi)
+      let selectedIds = [];
+      try {
+        const { fbIds = "" } = await chrome.storage.local.get(["fbIds"]);
+        selectedIds = getCleanIds(fbIds);
+      } catch (e) {
+        selectedIds = [];
+      }
+      for (const id of selectedIds) {
+        byAccount.set(id, {
+          accountId: id,
+          accountName: id,
+          groups: [],
+          todaySpend: 0,
+          hasScanData: false,
+        });
+      }
+
+      // Tên TK đã biết (từ modal "CHỌN TKQC CỦA VIA") → hiển thị tên thay vì act_xxx
+      const actNameMap = new Map();
+      for (const a of allActList || []) {
+        if (a?.account_id) actNameMap.set(String(a.account_id), a.name || "");
+      }
+
+      // 2) Ghi đè bằng dữ liệu thật từ cache của background
       for (const row of rows) {
         if (row.error) continue;
         if (!byAccount.has(row.accountId)) {
@@ -1940,16 +2099,27 @@ document.addEventListener("DOMContentLoaded", async () => {
             accountName: row.accountName,
             groups: [],
             todaySpend: 0,
+            hasScanData: false,
           });
         }
         const acc = byAccount.get(row.accountId);
         acc.groups.push(row);
         acc.todaySpend += Number(row.spend) || 0;
+        // Có ít nhất 1 adset được quét thành công → đã có dữ liệu thật
+        acc.hasScanData = true;
+        if (!acc.accountName || acc.accountName === acc.accountId) {
+          acc.accountName = row.accountName || acc.accountName;
+        }
       }
 
       for (const [id, acc] of byAccount) {
         try {
-          const accountName = acc.accountName || id;
+          // Tên hiển thị: ưu tiên tên từ cache → tên trong modal chọn TKQC → act_xxx
+          const rawAccountId = String(id).replace(/^act_/, "");
+          const accountName =
+            (acc.accountName && acc.accountName !== id
+              ? acc.accountName
+              : actNameMap.get(rawAccountId)) || acc.accountName || id;
           const todaySpend = acc.todaySpend;
 
           // --- Render nhóm theo trạng thái ---
@@ -1994,8 +2164,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             const cpcDisplay =
               cpcValNum > 0 ? cpcValNum.toLocaleString("vi-VN") + " đ" : "0 đ";
 
-            const rawId = String(id).replace("act_", "");
-            const editAdsetUrl = `https://adsmanager.facebook.com/adsmanager/manage/adsets/edit?act=${rawId}&adset_ids=${adset.adsetId}`;
+            const editAdsetUrl = `https://adsmanager.facebook.com/adsmanager/manage/adsets/edit?act=${rawAccountId}&adset_ids=${adset.adsetId}`;
 
             const localDisplay = window.localConfigs?.[adset.adsetId] || {
               maxSpend: "",
@@ -2073,11 +2242,17 @@ document.addEventListener("DOMContentLoaded", async () => {
           let displayBalance = "—";
           let balanceColor = "#31a24c";
           let inputHtml = "";
+          // TK đã chọn nhưng chưa có dữ liệu quét (lỗi API / không có adset)
+          const noScanData = !acc.hasScanData;
 
           const savedRecharge = savedPrepayData[id] || "";
           inputHtml = `<input type="number" class="prepay-input" data-id="${id}" data-spend="${todaySpend}" value="${savedRecharge}" placeholder="Tổng nạp..." title="Nhập tổng tiền nạp hôm nay">`;
 
-          if (savedRecharge) {
+          if (noScanData) {
+            // Chưa quét được dữ liệu → hiện rõ trạng thái thay vì im lặng biến mất
+            displayBalance = "Chưa có dữ liệu";
+            balanceColor = "#d97706";
+          } else if (savedRecharge) {
             const actualRecharge = parseFloat(savedRecharge);
             const calcBalance = actualRecharge - todaySpend * 1.1;
             displayBalance =
@@ -2127,14 +2302,14 @@ document.addEventListener("DOMContentLoaded", async () => {
             balanceColor = "#8c939d";
           }
 
-          const directBillingUrl = `https://www.facebook.com/ads/manager/billing/transactions/?act=${rawId}`;
+          const directBillingUrl = `https://www.facebook.com/ads/manager/billing/transactions/?act=${rawAccountId}`;
           if (billingList) {
             billingList.innerHTML += `
                     <div class="billing-item" style="flex-wrap: wrap;">
                         <div style="flex: 1; min-width: 120px;">
                             <span style="font-size:11px; color:#606770">${accountName}</span>
                             <span class="billing-balance" id="bal-${id}" style="color: ${balanceColor};">${displayBalance}</span>
-                            <div style="font-size: 10px; color: #8c939d; margin-top: 2px;">Đã tiêu hôm nay: ${new Intl.NumberFormat("vi-VN").format(Math.round(todaySpend))} đ</div>
+                            <div style="font-size: 10px; color: #8c939d; margin-top: 2px;">${noScanData ? "Chưa quét được dữ liệu tài khoản" : `Đã tiêu hôm nay: ${new Intl.NumberFormat("vi-VN").format(Math.round(todaySpend))} đ`}</div>
                         </div>
                         <div style="display: flex; align-items: center; gap: 5px;">
                             ${inputHtml}

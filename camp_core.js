@@ -332,13 +332,21 @@
     try {
       const TG = global.TelegramConfig;
       if (TG && typeof TG.sendMessage === "function") {
-        await TG.sendMessage(html);
+        const res = await TG.sendMessage(html);
+        // ⚠️ KHÔNG nuốt lỗi — nếu không gửi được thì phải biết ngay
+        if (res && res.ok === false) {
+          console.error(
+            "[CAMP CORE] ❌ Gửi Telegram THẤT BẠI:",
+            res.error || "không rõ lý do",
+          );
+          return false;
+        }
         return true;
       }
       console.warn("[CAMP CORE] Chưa có TelegramConfig → bỏ qua gửi tin.");
       return false;
     } catch (e) {
-      console.warn("[CAMP CORE] Lỗi gửi Telegram:", e?.message || e);
+      console.error("[CAMP CORE] Lỗi gửi Telegram:", e?.message || e);
       return false;
     }
   }
@@ -886,7 +894,7 @@
             `Nâng ngưỡng tiêu ${money(res2.currentMaxSpend)} → ${money(res2.newMaxSpend)} (+${res2.diff} KQ)`,
           );
           await notifyTelegram(
-            `🚀 <b>NÂNG NGƯỠNG TỰ ĐỘNG</b> 🚀\n- Nhóm: ${row.name}\n- TK: ${row.accountName}\n- KQ mới: +${res2.diff} (tổng ${row.resultCount})\n- Ngưỡng tiêu cũ: ${money(res2.currentMaxSpend)}đ\n- Ngưỡng tiêu MỚI: <b>${money(res2.newMaxSpend)}đ</b>`,
+            `🚀 <b>NÂNG NGƯỠNG TỰ ĐỘNG</b> 🚀\n- Nhóm: ${esc(row.name)}\n- TK: ${esc(row.accountName)}\n- KQ mới: +${res2.diff} (tổng ${row.resultCount})\n- Ngưỡng tiêu cũ: ${money(res2.currentMaxSpend)}đ\n- Ngưỡng tiêu MỚI: <b>${money(res2.newMaxSpend)}đ</b>`,
           );
         }
       }
@@ -972,9 +980,9 @@
           pushLog(state, "auto_pause", row.name, row.campaignName, `Tự động tắt — ${reason}`);
           await notifyTelegram(
             `⛔ <b>TỰ ĐỘNG TẮT NHÓM QUẢNG CÁO</b> ⛔\n` +
-              `- TK: ${row.accountName || "-"}\n` +
-              `- Chiến dịch: ${row.campaignName || "-"}\n` +
-              `- Nhóm: ${row.name}\n` +
+            `- TK: ${esc(row.accountName || "-")}\n` +
+            `- Chiến dịch: ${esc(row.campaignName || "-")}\n` +
+            `- Nhóm: ${esc(row.name)}\n` +
               `- Chế độ: ${modeTag}\n` +
               `- Đã tiêu: ${money(row.spend)} đ\n` +
               `- ${row.resultLabel || "Kết quả"}: ${money(row.resultCount)}\n` +
@@ -1084,8 +1092,8 @@
 
         // (F) Lý do bật lại (KHÔNG dùng CPM — CPM chỉ dùng để TẮT nhóm)
         const resumeReason = priceOk
-          ? `có KQ mới (${money(newResults)}) với giá ${money(newPrice)} đ <= ngưỡng ${money(baseLim.maxPrice)} đ`
-          : `tổng chi tiêu ${money(row.spend)} đ <= ngưỡng tiêu ${money(newMaxSpend)} đ`;
+          ? `có KQ mới (${money(newResults)}) với giá ${money(newPrice)} đ ≤ ngưỡng ${money(baseLim.maxPrice)} đ`
+          : `tổng chi tiêu ${money(row.spend)} đ ≤ ngưỡng tiêu ${money(newMaxSpend)} đ`;
 
         pushLog(
           state,
@@ -1096,9 +1104,9 @@
         );
         await notifyTelegram(
           `✅ <b>TỰ ĐỘNG BẬT LẠI NHÓM QUẢNG CÁO</b> ✅\n` +
-            `- TK: ${row.accountName || p.accountName || "-"}\n` +
-            `- Chiến dịch: ${row.campaignName || p.campaignName || "-"}\n` +
-            `- Nhóm: ${row.name || p.name}\n` +
+            `- TK: ${esc(row.accountName || p.accountName || "-")}\n` +
+            `- Chiến dịch: ${esc(row.campaignName || p.campaignName || "-")}\n` +
+            `- Nhóm: ${esc(row.name || p.name)}\n` +
             `- KQ mới: ${money(newResults)}\n` +
             `- Giá mới: ${money(newPrice)} đ (ngưỡng ${money(baseLim.maxPrice)} đ)\n` +
             `- Lý do bật lại: ${resumeReason}\n` +

@@ -91,11 +91,25 @@
   async function notifyTelegram(html) {
     try {
       if (typeof window.sendTelegramAlert === "function") {
-        await window.sendTelegramAlert(html);
+        const res = await window.sendTelegramAlert(html);
+        if (res && res.ok === false) {
+          console.error(
+            "[CARE CAMP] ❌ Gửi Telegram THẤT BẠI:",
+            res.error || "không rõ lý do",
+          );
+          return false;
+        }
         return true;
       }
       if (window.TelegramConfig?.sendMessage) {
-        await window.TelegramConfig.sendMessage(html);
+        const res = await window.TelegramConfig.sendMessage(html);
+        if (res && res.ok === false) {
+          console.error(
+            "[CARE CAMP] ❌ Gửi Telegram THẤT BẠI:",
+            res.error || "không rõ lý do",
+          );
+          return false;
+        }
         return true;
       }
       console.warn(
@@ -103,7 +117,7 @@
       );
       return false;
     } catch (e) {
-      console.warn("[CARE CAMP] Lỗi gửi Telegram:", e?.message || e);
+      console.error("[CARE CAMP] Lỗi gửi Telegram:", e?.message || e);
       return false;
     }
   }
@@ -1727,8 +1741,8 @@
           }
           // (F) Lý do bật lại (KHÔNG dùng CPM — CPM chỉ dùng để TẮT nhóm)
           const resumeReason = priceOk
-            ? `có KQ mới (${money(newResults)}) với giá ${money(newPrice)} đ <= ngưỡng ${money(baseLim.maxPrice)} đ`
-            : `tổng chi tiêu ${money(row.spend)} đ <= ngưỡng tiêu ${money(newMaxSpend)} đ`;
+          ? `có KQ mới (${money(newResults)}) với giá ${money(newPrice)} đ ≤ ngưỡng ${money(baseLim.maxPrice)} đ`
+          : `tổng chi tiêu ${money(row.spend)} đ ≤ ngưỡng tiêu ${money(newMaxSpend)} đ`;
           pushLog(
             "auto_resume",
             p.name,

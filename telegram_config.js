@@ -158,6 +158,80 @@
    * @param {object} [opts]   { parseMode, silent }
    * @returns {Promise<{ok:boolean, sent:number, total:number, error?:string}>}
    */
+  /** Bo the th the HTML (fallback khi Telegram loi parse) */
+  function stripHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/b>/gi, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  }
+
+  /**
+   * Gui tin toi 1 chat.
+   * Neu Telegram bao loi parse (vi du "can't parse entities") -> thu lai
+   * KHONG dung parse_mode de tin luon duoc gui.
+   */
+  async function sendToChat(url, chatId, message, parseMode, silent) {
+    try {
+      let response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: parseMode,
+          disable_notification: !!silent,
+        }),
+      });
+
+      if (!response.ok && parseMode) {
+        let detail = "";
+        try {
+          const data = await response.clone().json();
+          detail = data && data.description ? data.description : "";
+        } catch (e) {}
+        if (/parse|entities/i.test(detail)) {
+          response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: stripHtml(message),
+              disable_notification: !!silent,
+            }),
+          });
+        }
+      }
+
+      if (!response.ok) {
+        let detail = "";
+        try {
+          const data = await response.json();
+          detail =
+            data && data.description ? data.description : response.statusText;
+        } catch (e) {
+          detail = response.statusText || "";
+        }
+        const err = "HTTP " + response.status + (detail ? ": " + detail : "");
+        console.error(
+          "[TelegramConfig] Loi gui tin den ID " + chatId + ": " + err,
+        );
+        return { ok: false, error: err };
+      }
+      console.log(
+        "[TelegramConfig] Da gui canh bao thanh cong toi ID " + chatId,
+      );
+      return { ok: true, error: "" };
+    } catch (error) {
+      const msg = error && error.message ? error.message : String(error);
+      console.error("[TelegramConfig] Loi ket noi API Telegram:", error);
+      return { ok: false, error: msg };
+    }
+  }
+
   async function sendMessage(message, opts) {
     const options = opts || {};
     const parseMode = options.parseMode || "HTML";
@@ -184,32 +258,9 @@
     let lastError = "";
 
     for (const chatId of cfg.chatIds) {
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: message,
-            parse_mode: parseMode,
-            disable_notification: !!options.silent,
-          }),
-        });
-
-        if (!response.ok) {
-          lastError = `HTTP ${response.status}`;
-          console.error(
-            `❌ Lỗi gửi tin nhắn đến ID ${chatId}:`,
-            response.statusText,
-          );
-        } else {
-          sent++;
-          console.log(`✅ Đã gửi cảnh báo thành công tới ID ${chatId}`);
-        }
-      } catch (error) {
-        lastError = error?.message || String(error);
-        console.error("❌ Lỗi kết nối API Telegram:", error);
-      }
+      const ok = await sendToChat(url, chatId, message, parseMode, options.silent);
+      if (ok.ok) sent++;
+      else lastError = ok.error;
     }
 
     return {
@@ -252,31 +303,9 @@
     let lastError = "";
 
     for (const chatId of chatIds) {
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: message,
-            parse_mode: parseMode,
-            disable_notification: !!options.silent,
-          }),
-        });
-        if (!response.ok) {
-          lastError = `HTTP ${response.status}`;
-          console.error(
-            `❌ Lỗi gửi tin nhắn đến ID ${chatId}:`,
-            response.statusText,
-          );
-        } else {
-          sent++;
-          console.log(`✅ Đã gửi cảnh báo thành công tới ID ${chatId}`);
-        }
-      } catch (error) {
-        lastError = error?.message || String(error);
-        console.error("❌ Lỗi kết nối API Telegram:", error);
-      }
+      const r = await sendToChat(url, chatId, message, parseMode, options.silent);
+      if (r.ok) sent++;
+      else lastError = r.error;
     }
 
     return {

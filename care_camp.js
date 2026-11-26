@@ -592,6 +592,10 @@
     const today = dayKey();
     if (state.dayStamp === today) return 0;
     state.dayStamp = today;
+    // (I) Sang ngày mới → xoá cache mốc đếm KQ trong RAM để lần tính
+    //     kế tiếp coi mốc cũ = 0 (khớp với background đã reset storage).
+    if (window.prevHieuQua) window.prevHieuQua = {};
+    if (window.prevHieuQuaByChannel) window.prevHieuQuaByChannel = {};
     return purgeStaleAutoPaused();
   }
 
@@ -659,6 +663,9 @@
       }
     }
 
+    // (H) Kênh số mặc định (không ở chế độ CPL)
+    let channel = label === "Click Link" ? "click" : "messages";
+
     // 3. Bật CPC → ưu tiên click link
     if (useCpcCombo) {
       // 5. Chế độ "Kết hợp CPC" → CPC có ngưỡng riêng (maxCpc),
@@ -666,22 +673,42 @@
       if (useCpl && inboxCount != null) {
         count = inboxCount;
         label = "Hội thoại (Inbox)";
+        channel = "inbox";
       }
     } else if (useCpc) {
       if (metrics.inlineLinkClicks > 0) {
         count = metrics.inlineLinkClicks;
         label = "Click Link";
+        channel = "click";
       } else if (useCpl && inboxCount != null && inboxCount > 0) {
         count = inboxCount;
         label = "Hội thoại (Inbox)";
+        channel = "inbox";
       }
     } else if (useCpl && inboxCount != null) {
       // 4. Bật CPL → dùng số hội thoại đếm từ inbox theo tag
       count = inboxCount;
       label = "Hội thoại (Inbox)";
+      channel = "inbox";
     }
 
-    return { count, label };
+    // (H) Số dùng để NÂNG NGƯỠNG.
+    //   - Bật CPL (đơn hoặc kết hợp CPC) → nguồn DUY NHẤT là Inbox.
+    //     Không xác định được (thiếu tag [N1] / cache inbox chưa sẵn sàng)
+    //     → "unknown" → bỏ qua lần nâng ngưỡng này, chờ lần sau.
+    //   - Còn lại → dùng đúng số đang hiển thị.
+    let raiseCount = count;
+    if (useCpl) {
+      if (inboxCount != null) {
+        raiseCount = inboxCount;
+        channel = "inbox";
+      } else {
+        raiseCount = 0;
+        channel = "unknown";
+      }
+    }
+
+    return { count, label, raiseCount, channel };
   }
 
   /** Trích xuất tag [N1] từ tên nhóm */
@@ -880,6 +907,9 @@
             cpcNum,
             resultCount: res.count,
             resultLabel: res.label,
+            // (H) Số + kênh dùng để NÂNG NGƯỠNG (tách riêng số hiển thị)
+            raiseCount: res.raiseCount,
+            raiseChannel: res.channel,
             price,
             cpc: Math.round(metrics.cpc),
             spend: metrics.spend,
@@ -948,6 +978,20 @@
     if (el) el.innerHTML = html;
   }
 
+  /** Huy hiệu trạng thái của dòng nhóm (ĐÃ TẮT / VƯỢT NGƯỠNG / An toàn) */
+  function statusBadgeHtml(r, bad) {
+    if (r.isPaused)
+      return '<span style="background:#f0f2f5;color:#65676b;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #ccd0d5">⏸️ ĐÃ TẮT</span>';
+    if (bad)
+      return '<span style="background:#fdecea;color:#fa383e;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #fa383e">⚠️ VƯỢT NGƯỠNG</span>';
+    return '<span style="background:#e7f6ec;color:#1a7f37;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #31a24c">✅ An toàn</span>';
+  }
+
+  /** Tóm tắt ngưỡng hiển thị dưới huy hiệu trạng thái */
+  function limitsSummaryHtml(lim) {
+    return `${money(lim.maxSpend)} | ${money(lim.maxPrice)}${state.settings.useCpcCombo ? ` | CPC ${money(lim.maxCpc)}` : ""} | ${money(lim.maxCpm)}`;
+  }
+
   function renderRowsTable() {
     const tb = $("ccTableBody");
     if (!tb) return;
@@ -970,7 +1014,7 @@
         const watched = state.monitored.some(
           (m) => String(m.adsetId) === String(r.adsetId),
         );
-        return `<tr>
+        return `<tr data-adset="${esc(r.adsetId)}">
         <td style="text-align:center">
           <input type="checkbox" class="cc-check" value="${esc(r.adsetId)}" ${watched ? "checked" : ""} />
         </td>
@@ -999,15 +1043,9 @@
         </td>
         <td style="color:#0e7490;font-weight:bold;font-family:monospace;text-align:right">${money(r.cpcNum)} đ</td>
         <td style="color:#fa383e;font-weight:bold;font-family:monospace;text-align:right">${money(Math.floor(r.cpm))} đ</td>
-        <td style="text-align:center">
-          ${
-            r.isPaused
-              ? '<span style="background:#f0f2f5;color:#65676b;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #ccd0d5">⏸️ ĐÃ TẮT</span>'
-              : bad
-                ? '<span style="background:#fdecea;color:#fa383e;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #fa383e">⚠️ VƯỢT NGƯỠNG</span>'
-                : '<span style="background:#e7f6ec;color:#1a7f37;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:bold;border:1px solid #31a24c">✅ An toàn</span>'
-          }
-          <div style="font-size:10px;color:#8c939d;margin-top:2px">${money(lim.maxSpend)} | ${money(lim.maxPrice)}${state.settings.useCpcCombo ? ` | CPC ${money(lim.maxCpc)}` : ""} | ${money(lim.maxCpm)}</div>
+        <td class="cc-status-cell" style="text-align:center">
+          ${statusBadgeHtml(r, bad)}
+          <div class="cc-lim-summary" style="font-size:10px;color:#8c939d;margin-top:2px">${limitsSummaryHtml(lim)}</div>
         </td>
         <td>
           <div style="display:flex;gap:4px;align-items:center;justify-content:center">
@@ -1361,16 +1399,26 @@
 
     for (const row of rows.filter((r) => !r.error)) {
       const g = state.settings;
+      // (H) Dùng `raiseCount` + `raiseChannel` — trong chế độ CPL chỉ nâng
+      //     theo số hội thoại Inbox; nếu không xác định được (thiếu tag
+      //     [N1] / cache inbox chưa sẵn sàng) → bỏ qua lần nâng này.
       const res = await window.raiseThresholdForAdset(
         row.adsetId,
-        row.resultCount || 0,
+        row.raiseCount ?? row.resultCount ?? 0,
         {
           maxSpend: g.maxSpend,
           maxPrice: g.maxPrice,
           maxCpm: g.maxCpm,
           maxCpc: g.maxCpc,
+          channel: row.raiseChannel || "",
         },
       );
+      if (res?.skipped) {
+        console.log(
+          `⏭️ [CARE CAMP] BỎ QUA nâng ngưỡng ${row.name} — chế độ CPL nhưng chưa xác định được số hội thoại Inbox.`,
+        );
+        continue;
+      }
       if (res?.raised) {
         changed = true;
         console.log(
@@ -1577,6 +1625,11 @@
             cpm: row.cpm,
             cpcNum: row.cpcNum,
             result: row.resultCount,
+            // (H) Lưu thêm số theo kênh Inbox để tính "KQ mới" đúng kênh
+            raiseResult:
+              row.raiseChannel === "inbox"
+                ? Number(row.raiseCount || 0)
+                : Number(row.resultCount || 0),
             resultLabel: row.resultLabel,
             maxSpend: limNow.maxSpend,
             maxPrice: limNow.maxPrice,
@@ -1646,10 +1699,26 @@
           maxCpm: p.maxCpm || state.settings.maxCpm,
           maxCpc: p.maxCpc || state.settings.maxCpc,
         };
-        const prevResult = Number(p.result || 0);
-        const newResults = Math.max(0, row.resultCount - prevResult);
+        // (H) Số KQ dùng để tính "KQ MỚI" phải theo ĐÚNG kênh số đang dùng.
+        //   - Kênh "inbox" → dùng số hội thoại Inbox.
+        //   - Kênh "unknown" (chế độ CPL nhưng chưa xác định được số) →
+        //     KHÔNG tính KQ mới (newResults = 0) để không nâng ngưỡng oan.
+        const resumeChannel = row.raiseChannel || "";
+        const useInboxChannel = resumeChannel === "inbox";
+        const unknownChannel = resumeChannel === "unknown";
+        const currentCount = useInboxChannel
+          ? Number(row.raiseCount || 0)
+          : Number(row.resultCount || 0);
+        const prevResult = useInboxChannel
+          ? Number(p.raiseResult ?? p.result ?? 0)
+          : Number(p.result || 0);
+        const newResults = unknownChannel
+          ? 0
+          : Math.max(0, currentCount - prevResult);
         const newPrice =
-          row.resultCount > 0 ? Math.round(row.spend / row.resultCount) : Infinity;
+          !unknownChannel && currentCount > 0
+            ? Math.round(row.spend / currentCount)
+            : Infinity;
 
         // NÂNG NGƯỠNG TỔNG CHI TIÊU theo số KẾT QUẢ MỚI phát sinh trong lúc bị tắt:
         //   maxSpend mới = maxSpend lúc tắt + maxPrice × (số KQ mới)
@@ -1724,8 +1793,21 @@
 
           // Đồng bộ mốc đếm KQ dùng chung (window.prevHieuQua) để lần quét sau
           // KHÔNG nâng ngưỡng thêm cho các KQ đã tính ở lần này.
-          if (window.prevHieuQua) {
-            window.prevHieuQua[String(p.adsetId)] = row.resultCount;
+          // (H) Ghi vào map của ĐÚNG kênh số đang dùng (inbox/messages/click)
+          //     để không đè mốc của kênh khác. `resumeChannel` đã khai báo ở trên.
+          if (resumeChannel && resumeChannel !== "unknown") {
+            if (window.prevHieuQua) {
+              window.prevHieuQua[String(p.adsetId)] = currentCount;
+            }
+            try {
+              await window.CampCore?.setPrevForAdset?.(
+                String(p.adsetId),
+                currentCount,
+                resumeChannel,
+              );
+            } catch (e) {
+              /* bỏ qua */
+            }
           }
           if (typeof window.careCampRefreshThresholds === "function") {
             window.careCampRefreshThresholds();
@@ -1851,8 +1933,23 @@
     }
   }
 
-  function saveRowLimits(adsetId, btn) {
-    const tr = btn.closest("tr");
+  /**
+   * Lưu ngưỡng riêng của 1 nhóm.
+   *
+   * @param {string} adsetId  ID nhóm QC
+   * @param {HTMLElement|null} btn  Nút "Lưu" (null khi tự động lưu khi blur)
+   * @param {object} [opts]
+   * @param {boolean} [opts.silent]  Không hiện toast / không đổi text nút
+   * @param {boolean} [opts.skipRender]  Không render lại bảng (để tránh mất focus khi đang gõ)
+   */
+  function saveRowLimits(adsetId, btn, opts = {}) {
+    const { silent = false, skipRender = false } = opts;
+    const tr =
+      btn?.closest("tr") ||
+      $("ccTableBody")?.querySelector(
+        `tr[data-adset="${CSS.escape(String(adsetId))}"]`,
+      );
+    if (!tr) return;
     const maxSpend = num(tr.querySelector(".cc-lim-spend")?.value, 0);
     const maxPrice = num(tr.querySelector(".cc-lim-price")?.value, 0);
     const maxCpm = num(tr.querySelector(".cc-lim-cpm")?.value, 0);
@@ -1884,9 +1981,70 @@
       m.limits = { maxSpend, maxPrice, maxCpm, maxCpc };
     }
     saveState(true);
-    btn.innerText = "✅ Đã lưu";
-    setTimeout(() => (btn.innerText = "Lưu"), 1500);
-    renderAll();
+
+    // 3. Đồng bộ bảng "Chỉ Số" & "Auto-Pause" (dùng chung localConfigs)
+    syncLocalConfigInputs(adsetId, {
+      maxSpend,
+      maxPrice,
+      maxCpm,
+      maxCpc,
+    });
+
+    if (!silent) {
+      if (btn) {
+        btn.innerText = "✅ Đã lưu";
+        setTimeout(() => {
+          if (btn.isConnected) btn.innerText = "Lưu";
+        }, 1500);
+      }
+      if (!skipRender) renderAll();
+    } else if (!skipRender) {
+      // Cập nhật nhẹ huy hiệu trạng thái + tóm tắt ngưỡng của dòng này
+      // (không render lại toàn bảng để không mất focus ô đang nhập).
+      refreshRowStatus(adsetId);
+    }
+  }
+
+  /**
+   * Cập nhật nhẹ huy hiệu trạng thái + dòng tóm tắt ngưỡng sau khi tự động lưu,
+   * KHÔNG render lại toàn bảng (để người dùng không bị mất focus khi đang nhập).
+   */
+  function refreshRowStatus(adsetId) {
+    const tr = $("ccTableBody")?.querySelector(
+      `tr[data-adset="${CSS.escape(String(adsetId))}"]`,
+    );
+    if (!tr) return;
+    const row = state.rows.find((r) => String(r.adsetId) === String(adsetId));
+    if (!row) return;
+    const lim = limitsFor(adsetId);
+    const cell = tr.querySelector(".cc-status-cell");
+    if (!cell) return;
+    const badge = cell.querySelector("span");
+    if (badge) badge.outerHTML = statusBadgeHtml(row, isBreached(row));
+    const sum = cell.querySelector(".cc-lim-summary");
+    if (sum) sum.textContent = limitsSummaryHtml(lim);
+  }
+
+  /**
+   * Đồng bộ ô nhập ngưỡng của 1 nhóm ở CÁC BẢNG KHÁC
+   * (bảng Chỉ Số #resultTableBody, bảng Auto-Pause #apTableBody)
+   * để người dùng thấy cùng giá trị ngay sau khi sửa ở cột NGƯỠNG RIÊNG.
+   */
+  function syncLocalConfigInputs(adsetId, lim) {
+    const map = [
+      [".local-spend", lim.maxSpend],
+      [".local-price", lim.maxPrice],
+      [".local-cpm", lim.maxCpm],
+      [".local-cpc", lim.maxCpc],
+    ];
+    for (const [cls, value] of map) {
+      document.querySelectorAll(cls).forEach((inp) => {
+        const row = inp.closest("tr");
+        const btn = row?.querySelector(".btn-save-local");
+        if (!btn || btn.getAttribute("data-id") !== String(adsetId)) return;
+        inp.value = value;
+      });
+    }
   }
 
   /**
@@ -1928,10 +2086,14 @@
       const sInp = tr.querySelector(".cc-lim-spend");
       const pInp = tr.querySelector(".cc-lim-price");
       const cInp = tr.querySelector(".cc-lim-cpm");
+      const cpcInp = tr.querySelector(".cc-lim-cpc");
       if (sInp) sInp.value = g.maxSpend;
       if (pInp) pInp.value = g.maxPrice;
       if (cInp) cInp.value = g.maxCpm;
+      if (cpcInp) cpcInp.value = g.maxCpc;
     }
+    // Đồng bộ ô nhập ở bảng Chỉ Số & Auto-Pause
+    syncLocalConfigInputs(adsetId, g);
     renderAll();
 
     toast(
@@ -2116,6 +2278,14 @@
     const ccCpcCol = $("ccMaxCpcCol");
     if (ccCpcCol)
       ccCpcCol.style.display = state.settings.useCpcCombo ? "" : "none";
+    // Ẩn/hiện ghi chú chế độ CPL (giải thích quy tắc nâng ngưỡng theo Inbox)
+    const syncCplHint = () => {
+      const hint = $("ccCplHint");
+      if (hint) {
+        hint.style.display = state.settings.useCpl ? "" : "none";
+      }
+    };
+    syncCplHint();
     $("ccAutoScan").checked = state.autoScan;
 
     $("ccBtnLoad")?.addEventListener("click", doLoadAdsets);
@@ -2143,6 +2313,7 @@
       syncGlobalThreshold("maxPrice", state.settings.maxPrice);
       syncGlobalThreshold("maxCpm", state.settings.maxCpm);
       syncGlobalThreshold("maxCpc", state.settings.maxCpc);
+      syncCplHint();
       await saveState(true);
       renderAll();
       if (!silent) {
@@ -2183,7 +2354,30 @@
         }
       });
     });
-    $("ccUseCpl")?.addEventListener("change", persistSettings);
+    // (H) Khi BẬT CPL (từ TẮT → BẬT) → xóa mốc so sánh của kênh "inbox"
+    //     để lần quét kế tiếp coi là "LẦN ĐẦU" (mốc cũ = 0 → nâng ngưỡng
+    //     theo số hội thoại Inbox hiện có). Các lần sau chỉ nâng theo phần
+    //     hội thoại MỚI phát sinh.
+    const resetInboxPrevOnEnable = async () => {
+      try {
+        const cc = window.CampCore;
+        if (!cc?.setPrevMap) return;
+        await cc.setPrevMap({}, cc.CHANNEL_INBOX || "inbox");
+        console.log(
+          "[CARE CAMP] ♻️ Đã xóa mốc so sánh kênh Inbox (bật CPL) — lần quét tới sẽ coi mốc cũ = 0 và nâng ngưỡng.",
+        );
+      } catch (e) {
+        /* bỏ qua */
+      }
+    };
+
+    $("ccUseCpl")?.addEventListener("change", async (e) => {
+      const prevUseCpl = state.settings.useCpl;
+      await persistSettings();
+      if (e.target.checked && !prevUseCpl) {
+        await resetInboxPrevOnEnable();
+      }
+    });
     $("ccUseCpc")?.addEventListener("change", persistSettings);
     $("ccUseCpcCombo")?.addEventListener("change", (e) => {
       // Ẩn/hiện ô ngưỡng CPC toàn cục theo chế độ combo
@@ -2254,6 +2448,123 @@
     $("ccBtnClearPaused")?.addEventListener("click", clearAllAutoPaused);
     // Nút xoá toàn bộ nhóm đang theo dõi
     $("ccBtnClearMonitored")?.addEventListener("click", clearAllMonitored);
+
+    /* -----------------------------------------------------------------
+     * ⚡ TỰ ĐỘNG LƯU NGƯỠNG RIÊNG khi click ra ngoài ô nhập (blur)
+     *    Không cần bấm nút "Lưu" — chỉ cần sửa xong rồi click ra ngoài.
+     * ----------------------------------------------------------------- */
+    const LIM_INPUT_SEL =
+      "#ccTableBody .cc-lim-spend, #ccTableBody .cc-lim-price, " +
+      "#ccTableBody .cc-lim-cpc, #ccTableBody .cc-lim-cpm";
+
+    /** Chuẩn hóa giá trị ô nhập: bỏ khoảng trắng, chặn số âm
+     *  - Ô trống → khôi phục lại giá trị đang lưu (không ghi 0)
+     *  - Số âm / lỗi → gán 0
+     */
+    const normalizeLimInput = (inp, fallback) => {
+      const raw = (inp.value || "").trim();
+      if (raw === "") {
+        if (inp.value !== String(fallback)) inp.value = fallback;
+        return fallback;
+      }
+      const v = parseFloat(raw);
+      const finalVal = Number.isFinite(v) && v >= 0 ? v : 0;
+      if (inp.value !== String(finalVal)) inp.value = finalVal;
+      return finalVal;
+    };
+
+    // Click ra ngoài ô (blur) → tự động lưu
+    document.addEventListener(
+      "focusout",
+      (e) => {
+        const inp = e.target;
+        if (!inp?.matches?.(LIM_INPUT_SEL)) return;
+        const tr = inp.closest("tr");
+        const adsetId = tr?.getAttribute("data-adset");
+        if (!adsetId) return;
+
+        // Nếu đang chuyển focus sang nút "Lưu"/"↺" → để nút xử lý,
+        // tránh lưu 2 lần.
+        const nextEl = e.relatedTarget;
+        if (
+          nextEl?.classList?.contains("cc-btn-save") ||
+          nextEl?.classList?.contains("cc-btn-reset")
+        ) {
+          return;
+        }
+
+        // Chuẩn hóa trước (bỏ số âm / ký tự lạ / ô trống → giá trị đang lưu)
+        const cur = limitsFor(adsetId);
+        const fallbacks = {
+          "cc-lim-spend": cur.maxSpend,
+          "cc-lim-price": cur.maxPrice,
+          "cc-lim-cpm": cur.maxCpm,
+          "cc-lim-cpc": cur.maxCpc,
+        };
+        const cls = inp.classList.contains("cc-lim-spend")
+          ? "cc-lim-spend"
+          : inp.classList.contains("cc-lim-price")
+            ? "cc-lim-price"
+            : inp.classList.contains("cc-lim-cpm")
+              ? "cc-lim-cpm"
+              : "cc-lim-cpc";
+        normalizeLimInput(inp, fallbacks[cls]);
+
+        // So với giá trị đang lưu → không đổi thì khỏi làm gì
+        const next = {
+          maxSpend: num(
+            tr.querySelector(".cc-lim-spend")?.value,
+            cur.maxSpend,
+          ),
+          maxPrice: num(
+            tr.querySelector(".cc-lim-price")?.value,
+            cur.maxPrice,
+          ),
+          maxCpm: num(tr.querySelector(".cc-lim-cpm")?.value, cur.maxCpm),
+          maxCpc: tr.querySelector(".cc-lim-cpc")
+            ? num(tr.querySelector(".cc-lim-cpc").value, cur.maxCpc)
+            : cur.maxCpc,
+        };
+        if (
+          next.maxSpend === cur.maxSpend &&
+          next.maxPrice === cur.maxPrice &&
+          next.maxCpm === cur.maxCpm &&
+          next.maxCpc === cur.maxCpc
+        ) {
+          return; // không có thay đổi → khỏi lưu
+        }
+
+        // Lưu tự động (silent + không render lại toàn bảng để không mất focus)
+        saveRowLimits(adsetId, null, { silent: true, skipRender: true });
+        refreshRowStatus(adsetId);
+        // Bảng "nhóm đang được giám sát" không có ô nhập → render lại an toàn
+        renderMonitoredTable();
+
+        // Thông báo nhẹ
+        const name =
+          state.rows.find((r) => String(r.adsetId) === String(adsetId))?.name ||
+          adsetId;
+        toast(
+          `💾 Đã tự động lưu ngưỡng riêng: ${name} · ` +
+            `tiền ${money(next.maxSpend)} đ · giá ${money(next.maxPrice)} đ` +
+            (state.settings.useCpcCombo
+              ? ` · CPC ${money(next.maxCpc)} đ`
+              : "") +
+            ` · CPM ${money(next.maxCpm)} đ`,
+          "ok",
+        );
+      },
+      true,
+    );
+
+    // Nhấn Enter trong ô → blur (kích hoạt tự động lưu)
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const inp = e.target;
+      if (!inp?.matches?.(LIM_INPUT_SEL)) return;
+      e.preventDefault();
+      inp.blur();
+    });
 
     // Khi bấm menu ✂️ → đồng bộ token/ID từ mục CẤU HÌNH TÀI KHOẢN CARE CAMP
     document.getElementById("nav-carecamp")?.addEventListener("click", () => {

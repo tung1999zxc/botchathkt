@@ -2603,15 +2603,7 @@
             </span>
           </div>
         </div>
-        <button id="updateMoneyBtn" class="btn btn-green" style="
-              width: 100%;
-              margin-bottom: 15px;
-              padding: 10px;
-              font-size: 13px;
-              text-transform: uppercase;
-            ">
-          💰 CẬP NHẬT TIỀN NẠP
-        </button>
+       
 
         <div id="loading" style="
               display: none;
@@ -3556,6 +3548,23 @@
                 🔀 Kết hợp CPC (cần đủ 4 điều kiện)
               </label>
             </div>
+            <div
+              id="ccCplHint"
+              style="display:none;margin-top:8px;padding:8px 10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:11px;color:#0369a1;line-height:1.5"
+            >
+              📣 <b>Chế độ CPL đang bật</b>: ngưỡng chi tiêu chỉ được nâng khi có
+              <b>hội thoại Inbox MỚI</b> (đếm theo tag <b>[N1], [N2]...</b> trong nội
+              dung tin nhắn / tên quảng cáo).
+              <br />• Nhóm <b>không có tag [N1]</b> → <b>không nâng</b> ngưỡng.
+              <br />• Cache hộp thư chưa sẵn sàng → <b>bỏ qua</b> lần nâng này, chờ
+              lần sau.
+              <br />• Lần đầu bật CPL coi mốc cũ = 0 → <b>nâng ngưỡng</b> theo số
+              hội thoại Inbox hiện có; các lần sau chỉ nâng theo hội thoại mới phát
+              sinh.
+              <br />• <b>Sang ngày mới (00:00)</b>: mốc đếm KQ được reset (mốc cũ = 0)
+              và <b>ngưỡng riêng của từng nhóm được đưa về ngưỡng chung</b> → ngày
+              mới sẽ nâng ngưỡng theo toàn bộ KQ phát sinh trong ngày.
+            </div>
           </div>
         </div>
       </div>
@@ -3653,7 +3662,12 @@
               <th style="text-align:right">CPC</th>
               <th style="text-align:right">CPM</th>
               <th style="text-align:center">TRẠNG THÁI</th>
-              <th style="width:300px">NGƯỠNG RIÊNG (TIỀN | GIÁ | CPC | CPM)</th>
+              <th style="width:300px">
+                NGƯỠNG RIÊNG (TIỀN | GIÁ | CPC | CPM)
+                <div style="font-size:9px;font-weight:normal;color:#8c939d;margin-top:2px">
+                  ⚡ Tự động lưu khi click ra ngoài — không cần bấm "Lưu"
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody id="ccTableBody">

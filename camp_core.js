@@ -30,11 +30,59 @@
    * HẰNG SỐ / KEY STORAGE
    * ---------------------------------------------------------------- */
   const KEY_STATE = "camp_core_state"; // kết quả quét + mốc thời gian
-  const KEY_PREV = "camp_core_prev"; // mốc đếm KQ (G) — nguồn nâng ngưỡng
+  const KEY_PREV = "camp_core_prev"; // mốc đếm KQ (G) — nguồn nâng ngưỡng (legacy)
   const KEY_CONFIGS = "fb_local_configs"; // ngưỡng từng nhóm (nguồn chuẩn)
   const KEY_CC_STATE = "cc_camp_state"; // state của care_camp.js (monitored/autoPaused)
   const KEY_AUTO_PAUSE = "camp_core_auto_pause"; // Auto-Pause (bảng trong dashboard)
   const KEY_ALARM = "camp-core-scan";
+  // (I) Khoá ngày RIÊNG cho cơ chế "sang ngày mới" (reset mốc so sánh +
+  // đưa ngưỡng riêng từng nhóm về ngưỡng chung).
+  //
+  // ⚠️ KHÔNG dùng "cc_camp_state.dayStamp" cho việc này: care_camp.js cũng
+  //    ghi vào đó (state.dayStamp = dayKey()) → nếu tab dashboard mở qua đêm
+  //    thì dayStamp đã bị cập nhật sang ngày mới TRƯỚC khi background kịp
+  //    quét → background sẽ KHÔNG phát hiện sang ngày mới → không reset mốc.
+  //    Key riêng này chỉ do background (runScan) ghi → luôn đúng.
+  const KEY_DAY = "camp_core_day";
+
+  // (I) Khoá ngắn hạn khi nâng ngưỡng — chống việc background và UI
+  //     realtime cùng nâng 1 lần KQ (đặc biệt vào đúng 00:00 khi sang
+  //     ngày mới, mốc cũ = 0 → cả hai đều thấy diff > 0).
+  const KEY_RAISE_LOCK = "camp_core_raise_lock";
+  const RAISE_LOCK_TTL_MS = 15000; // coi lock cũ hơn 15s là stale → giành lại
+
+  // (I) Field đánh dấu NGÀY của mốc so sánh, gắn trong từng map mốc.
+  //     Giúp biết mốc đang lưu thuộc ngày nào → sang ngày mới thì coi
+  //     mốc cũ = 0 (mà không cần xoá map).
+  const PREV_DAY_FIELD = "__day";
+
+  // (I) Cache khoá ngày trong RAM — tránh đọc storage mỗi lần nâng ngưỡng.
+  //     "" = chưa biết (đọc storage lần đầu).
+  let _dayCache = "";
+
+  /* ------------------------------------------------------------------
+   * (H) MỐC SO SÁNH TÁCH THEO KÊNH SỐ
+   * ------------------------------------------------------------------
+   * Trước đây mốc đếm chỉ có 1 map ("camp_core_prev") cho mọi chế độ →
+   * khi đổi chế độ (Tin nhắn ↔ Inbox) số của chế độ cũ bị so với số
+   * của chế độ mới → sinh "diff oan" và nâng ngưỡng sai.
+   *
+   * Nay mỗi kênh số có 1 map riêng:
+   *   - "inbox"    : số hội thoại Inbox (chế độ CPL)
+   *   - "messages" : số Tin nhắn (messaging_conversation_started của Meta)
+   *   - "click"    : số Click Link (chế độ CPC)
+   *   - "unknown"  : KHÔNG xác định được số → KHÔNG nâng ngưỡng, KHÔNG ghi mốc
+   * ---------------------------------------------------------------- */
+  const CHANNEL_INBOX = "inbox";
+  const CHANNEL_MESSAGES = "messages";
+  const CHANNEL_CLICK = "click";
+  const CHANNEL_UNKNOWN = "unknown";
+
+  const PREV_KEYS = {
+    [CHANNEL_INBOX]: "camp_core_prev_inbox",
+    [CHANNEL_MESSAGES]: "camp_core_prev_messages",
+    [CHANNEL_CLICK]: "camp_core_prev_click",
+  };
 
   const SCAN_INTERVAL_MINUTES = 1; // chu kỳ alarm (Chrome tối thiểu 1 phút)
   const SCAN_INTERVAL_MS = 60 * 1000;
@@ -142,15 +190,125 @@
     return {};
   }
 
-  async function getPrevMap() {
-    const res = await storageGet([KEY_PREV]);
-    return res[KEY_PREV] && typeof res[KEY_PREV] === "object"
-      ? res[KEY_PREV]
-      : {};
+  /**
+   * (H) Đọc mốc so sánh THEO KÊNH SỐ.
+   *
+   * @param {string} [channel] "inbox" | "messages" | "click"
+   *   - Bỏ trống → trả về map LEGACY ("camp_core_prev") để tương thích.
+   * @returns {Promise<object>} map { adsetId: soKQ } (KHÔNG kèm field "__day")
+   */
+  async function getPrevMap(channel) {
+    const raw = await readPrevMapRaw(channel);
+    const out = {};
+    for (const k of Object.keys(raw)) {
+      if (k === PREV_DAY_FIELD) continue;
+      out[k] = raw[k];
+    }
+    return out;
   }
 
-  async function setPrevMap(map) {
-    await storageSet({ [KEY_PREV]: map });
+  /**
+   * (I) Đọc map mốc RAW (bao gồm field "__day" đánh dấu ngày của mốc).
+   * Dùng nội bộ để biết mốc thuộc ngày nào.
+   */
+  async function readPrevMapRaw(channel) {
+    const key = channel ? PREV_KEYS[channel] : KEY_PREV;
+    if (!key) return {};
+    const res = await storageGet([key]);
+    return res[key] && typeof res[key] === "object" ? res[key] : {};
+  }
+
+  /**
+   * (I) Ngày của mốc so sánh đang lưu (đọc từ field "__day").
+   * @returns {Promise<string>} YYYY-MM-DD ("" nếu map chưa có dấu ngày)
+   */
+  async function getPrevMapDay(channel) {
+    const raw = await readPrevMapRaw(channel);
+    return String(raw[PREV_DAY_FIELD] || "");
+  }
+
+  /**
+   * (H) MIGRATION 1 LẦN — copy map legacy sang map của kênh khi map kênh
+   * còn TRỐNG.
+   *
+   * Bối cảnh: trước khi tách kênh, mọi chế độ dùng chung map "camp_core_prev"
+   * (chứa số "Tin nhắn" của Meta). Sau khi cập nhật extension, map kênh
+   * "messages" / "click" sẽ trống → nếu không migrate, lần quét đầu tiên
+   * coi mốc cũ = 0 và nâng ngưỡng theo TOÀN BỘ số KQ tích luỹ → ngưỡng
+   * nhảy 1 lần rất lớn.
+   *
+   * ⚠️ KHÔNG migrate sang kênh "inbox" — vì mốc legacy là số "Tin nhắn",
+   *    khác hoàn toàn số hội thoại Inbox. Kênh inbox dùng cơ chế "seed"
+   *    (thiết lập mốc nền, không nâng) ở lần quan sát đầu tiên.
+   *
+   * @param {string} channel
+   * @returns {Promise<boolean>} true nếu đã migrate
+   */
+  async function migrateLegacyPrevMap(channel) {
+    if (!channel || channel === CHANNEL_INBOX) return false;
+    const key = PREV_KEYS[channel];
+    if (!key) return false;
+
+    const res = await storageGet([key, KEY_PREV]);
+    const current = res[key];
+    // Map kênh đã có dữ liệu → không migrate (tránh ghi đè mốc đúng)
+    if (current && typeof current === "object" && Object.keys(current).length) {
+      return false;
+    }
+    const legacy = res[KEY_PREV];
+    if (!legacy || typeof legacy !== "object" || !Object.keys(legacy).length) {
+      return false;
+    }
+
+    // (I) Bỏ field "__day" khỏi bản copy rồi gắn lại dấu ngày HÔM NAY.
+    //     Mốc legacy được "mượn" làm mốc nền của HÔM NAY (để tránh nhảy
+    //     ngưỡng 1 lần rất lớn) → KHÔNG được coi là mốc của hôm qua.
+    const copy = { ...legacy };
+    delete copy[PREV_DAY_FIELD];
+    copy[PREV_DAY_FIELD] = dayKey();
+    await storageSet({ [key]: copy });
+    console.log(
+      `[CAMP CORE] ♻️ Đã migrate mốc so sánh legacy → kênh "${channel}" (${Object.keys(legacy).length} nhóm).`,
+    );
+    return true;
+  }
+
+  /**
+   * (H) Ghi mốc so sánh THEO KÊNH SỐ.
+   *
+   * @param {object} map
+   * @param {string} [channel]
+   */
+  async function setPrevMap(map, channel) {
+    const key = channel ? PREV_KEYS[channel] : KEY_PREV;
+    if (!key) return;
+    const clean = { ...(map || {}) };
+    // (I) Luôn gắn dấu ngày hiện tại → giúp phát hiện "mốc thuộc hôm qua"
+    //     khi sang ngày mới (mốc cũ = 0).
+    clean[PREV_DAY_FIELD] = dayKey();
+    await storageSet({ [key]: clean });
+  }
+
+  /**
+   * (H) Ghi 1 mốc so sánh cho 1 nhóm mà không cần đọc/ghi cả map.
+   * Dùng khi cần ghi đè mốc cũ (VD sau khi bật lại nhóm) — tránh race
+   * với các lần ghi map khác trong cùng 1 vòng quét.
+   *
+   * @param {string} adsetId
+   * @param {number} value
+   * @param {string} [channel]
+   */
+  async function setPrevForAdset(adsetId, value, channel) {
+    const key = channel ? PREV_KEYS[channel] : KEY_PREV;
+    if (!key) return;
+    const raw = await readPrevMapRaw(channel);
+    const map = {};
+    for (const k of Object.keys(raw)) {
+      if (k === PREV_DAY_FIELD) continue;
+      map[k] = raw[k];
+    }
+    map[String(adsetId)] = num(value, 0);
+    await setPrevMap(map, channel);
   }
 
   /**
@@ -158,7 +316,10 @@
    *
    * @param {string} adsetId
    * @param {number} effectiveCount  số KQ hiện tại (hội thoại / click / CPR)
-   * @param {object} opts { maxSpend, maxPrice, maxCpm, maxCpc }
+   * @param {object} opts { maxSpend, maxPrice, maxCpm, maxCpc, channel }
+   * @param {string} [opts.channel] Kênh số: "inbox" | "messages" | "click"
+   *   - Bỏ trống → dùng map legacy ("camp_core_prev") (tương thích cũ).
+   *   - "unknown" → KHÔNG nâng ngưỡng, KHÔNG ghi mốc (chỉ biết là chưa xác định).
    * @returns {Promise<{raised:boolean, diff:number, currentMaxSpend:number, newMaxSpend:number}>}
    */
   async function raiseThresholdForAdset(adsetId, effectiveCount, opts = {}) {
@@ -167,21 +328,106 @@
     const globalMaxPrice = num(opts.maxPrice, 12000);
     const globalMaxCpm = num(opts.maxCpm, 40000);
     const globalMaxCpc = num(opts.maxCpc, 800);
+    const channel = opts.channel || "";
 
-    const configs = await getConfigs();
-    const prevMap = await getPrevMap();
+    // (H) Kênh "unknown" = KHÔNG xác định được số KQ (VD bật CPL nhưng
+    //     cache inbox chưa sẵn sàng / nhóm không có tag [N1]).
+    //     → BỎ QUA lần nâng ngưỡng này (chờ lần sau), KHÔNG ghi mốc
+    //     để tránh "diff oan" khi dữ liệu về sau.
+    if (channel === CHANNEL_UNKNOWN) {
+      return {
+        raised: false,
+        diff: 0,
+        skipped: true,
+        currentMaxSpend: 0,
+        newMaxSpend: 0,
+        currentMaxPrice: globalMaxPrice,
+        currentMaxCpm: globalMaxCpm,
+        currentMaxCpc: globalMaxCpc,
+      };
+    }
+
+    const configsIn = await getConfigs();
+
+    // (I) AN TOÀN QUA NGÀY — nguồn quyết định DUY NHẤT là khoá ngày
+    //     "camp_core_day" (chỉ background/UI qua camp_core.js ghi).
+    //
+    //   - lastDay === ""            → LẦN CHẠY ĐẦU: chỉ ghi nhận ngày,
+    //                                  KHÔNG reset ngưỡng riêng (tránh xoá
+    //                                  cấu hình user đã tự thiết lập).
+    //   - lastDay === today         → trong ngày → dùng mốc bình thường.
+    //   - lastDay !== today         → SANG NGÀY MỚI → coi mốc cũ = 0,
+    //                                  reset ngưỡng riêng về ngưỡng chung.
+    //
+    //   Sau khi reset, mốc được XOÁ THẬT (không chỉ "coi = 0") để nhóm
+    //   thứ 2, thứ 3... trong cùng vòng quét cũng thấy mốc rỗng → nâng
+    //   đúng theo toàn bộ KQ của ngày mới.
+    let prevReset = false;
+    const today = dayKey();
+    try {
+      const lastDay = await getRolloverDay();
+      if (!lastDay) {
+        // ⭐ Lần chạy đầu tiên → chỉ ghi nhận ngày, không reset gì.
+        await storageSet({ [KEY_DAY]: today });
+        _dayCache = today;
+        // Mốc legacy (không có dấu ngày) → coi là của hôm qua → xoá.
+        const rawMap = await readPrevMapRaw(channel);
+        const hasLegacy = Object.keys(rawMap).some(
+          (k) => k !== PREV_DAY_FIELD,
+        );
+        if (hasLegacy && !rawMap[PREV_DAY_FIELD]) {
+          await resetAllPrevMaps();
+          prevReset = true;
+        }
+      } else if (lastDay !== today) {
+        // 📅 SANG NGÀY MỚI
+        await resetAllPrevMaps();
+        prevReset = true;
+        await resetConfigsToGlobal(opts);
+        await storageSet({ [KEY_RAISE_LOCK]: {} });
+        await storageSet({ [KEY_DAY]: today });
+        _dayCache = today;
+        console.log(
+          `[CAMP CORE] 📅 Phát hiện sang ngày mới (${today}) — coi mốc cũ = 0 và đưa ngưỡng riêng về ngưỡng chung.`,
+        );
+      }
+    } catch (e) {
+      /* bỏ qua */
+    }
+
+    // (H) Migrate mốc legacy → map kênh (chỉ 1 lần, khi map kênh còn trống)
+    //     ⚠️ CHẠY SAU bước kiểm tra ngày → nếu vừa sang ngày mới thì mốc
+    //     đã bị xoá → không migrate mốc của HÔM QUA sang ngày mới.
+    if (channel && !prevReset) {
+      try {
+        await migrateLegacyPrevMap(channel);
+      } catch (e) {
+        /* bỏ qua */
+      }
+    }
+
+    // (I) Đọc LẠI cấu hình sau khi có thể đã reset về ngưỡng chung.
+    const configs = prevReset ? await getConfigs() : configsIn;
+
+    // (I) Đọc LẠI mốc sau khi có thể đã xoá (sang ngày mới).
+    const prevMap = prevReset ? {} : await getPrevMap(channel);
     const cur = num(effectiveCount, 0);
 
-    // (G) Chưa có mốc so sánh → coi mốc cũ = 0.
-    //     Nhóm đã có KQ ngay từ lần quét đầu tiên vẫn được nâng ngưỡng
-    //     ngay: diff = cur - 0 = cur.
-    const hasPrev = prevMap[id] !== undefined;
+    // (H) CHƯA CÓ MỐC SO SÁNH cho kênh này → coi mốc cũ = 0 và nâng
+    //     ngưỡng theo toàn bộ số KQ hiện tại (giữ hành vi gốc).
+    //     Lưu ý: mốc của mỗi kênh là RIÊNG, nên khi bật CPL lần đầu thì
+    //     mốc kênh "inbox" chưa có → coi mốc cũ = 0 → nâng ngưỡng theo
+    //     số hội thoại Inbox đang có. Từ lần quét sau chỉ nâng theo phần
+    //     TĂNG THÊM của số hội thoại Inbox.
+    //     (I) Sau khi sang ngày mới → mốc cũ = 0 → nâng theo toàn bộ KQ
+    //     của ngày mới (giống hành vi "lần đầu bật CPL").
+    const hasPrev = !prevReset && prevMap[id] !== undefined;
     const prev = hasPrev ? num(prevMap[id], 0) : 0;
 
     // KQ không tăng (và đã có mốc) → không nâng
     if (hasPrev && cur <= prev) {
       prevMap[id] = cur;
-      await setPrevMap(prevMap);
+      await setPrevMap(prevMap, channel);
       return {
         raised: false,
         diff: 0,
@@ -198,7 +444,7 @@
     // diff <= 0 → không có gì để nâng (VD nhóm mới, chưa có KQ nào)
     if (diff <= 0) {
       prevMap[id] = cur;
-      await setPrevMap(prevMap);
+      await setPrevMap(prevMap, channel);
       return {
         raised: false,
         diff: 0,
@@ -216,6 +462,34 @@
     const currentMaxCpm = num(local.maxCpm, globalMaxCpm);
     const currentMaxCpc = num(local.maxCpc, globalMaxCpc);
 
+    // (I) KHOÁ CHỐNG NÂNG 2 LẦN — background và UI realtime có thể chạy
+    //     cùng lúc (đặc biệt đúng 00:00 khi sang ngày mới, mốc cũ = 0 →
+    //     cả hai đều thấy diff > 0 → cả hai đều nâng).
+    //     Dùng khoá lưu trong storage: ai giành được khoá thì mới nâng.
+    const lockKey = `${channel || "legacy"}:${id}`;
+    const lockRes = await storageGet([KEY_RAISE_LOCK]);
+    const locks = lockRes[KEY_RAISE_LOCK] || {};
+    const nowTs = Date.now();
+    const myLock = locks[lockKey];
+    if (myLock && nowTs - Number(myLock.ts || 0) < RAISE_LOCK_TTL_MS) {
+      // Có người khác đang/đã nâng cho nhóm này → BỎ QUA (KHÔNG nâng 2 lần).
+      // ⚠️ KHÔNG ghi mốc ở đây: người giữ khoá sẽ ghi mốc sau khi nâng xong.
+      //    Nếu ta ghi mốc trước → lần nâng của người kia có thể bị bỏ sót.
+      return {
+        raised: false,
+        diff: 0,
+        locked: true,
+        currentMaxSpend,
+        newMaxSpend: currentMaxSpend,
+        currentMaxPrice,
+        currentMaxCpm,
+        currentMaxCpc,
+      };
+    }
+    // Giành khoá (ghi trước khi nâng để chặn lời gọi song song)
+    locks[lockKey] = { ts: nowTs };
+    await storageSet({ [KEY_RAISE_LOCK]: locks });
+
     // maxSpend mới = ngưỡng cũ + (ngưỡng giá × số KQ tăng thêm)
     const newMaxSpend = currentMaxSpend + currentMaxPrice * diff;
 
@@ -229,10 +503,15 @@
       originalMaxPrice: local.originalMaxPrice || globalMaxPrice,
       originalMaxCpm: local.originalMaxCpm || globalMaxCpm,
       originalMaxCpc: local.originalMaxCpc || globalMaxCpc,
+      // (I) Dấu ngày của lần nâng ngưỡng → dùng để biết ngưỡng đã được
+      //     "đặt lại về ngưỡng chung" trong ngày hay chưa (idempotent).
+      __day: today,
     };
     await setConfigs(configs);
+    // ⚠️ Ghi mốc SAU khi đã lưu ngưỡng → nếu lời gọi song song bị khoá,
+    //    lần sau sẽ thấy mốc = cur → không nâng lại (đúng 1 lần).
     prevMap[id] = cur;
-    await setPrevMap(prevMap);
+    await setPrevMap(prevMap, channel);
 
     return {
       raised: true,
@@ -436,6 +715,17 @@
 
   /* ------------------------------------------------------------------
    * TÍNH CHỈ SỐ KẾT QUẢ (giống hệt logic cũ của 2 bảng)
+   * ------------------------------------------------------------------
+   * (H) Trả về thêm `raiseCount` + `channel` — SỐ DÙNG ĐỂ NÂNG NGƯỠNG:
+   *   - "inbox"    : số hội thoại Inbox (chế độ CPL)
+   *   - "click"    : số Click Link (chế độ CPC)
+   *   - "messages" : số Tin nhắn của Meta insights (chế độ CPR/mặc định)
+   *   - "unknown"  : KHÔNG xác định được số KQ đáng tin cậy
+   *                  (VD bật CPL nhưng nhóm không có tag [N1] hoặc cache
+   *                   inbox chưa sẵn sàng) → KHÔNG nâng ngưỡng, chờ lần sau.
+   *
+   * ⚠️ `count` / `label` (dùng cho HIỂN THỊ và tính giá) GIỮ NGUYÊN logic
+   *    cũ — không thay đổi hành vi bảng.
    * ---------------------------------------------------------------- */
   function pickResult(metrics, useCpl, useCpc, optimizationGoal, inboxCount, useCpcCombo) {
     let count = 0;
@@ -458,25 +748,48 @@
       }
     }
 
+    // Kênh số mặc định (không ở chế độ CPL) — suy ra từ nhãn đã chọn
+    let channel = label === "Click Link" ? CHANNEL_CLICK : CHANNEL_MESSAGES;
+
     if (useCpcCombo) {
       if (useCpl && inboxCount != null) {
         count = inboxCount;
         label = "Hội thoại (Inbox)";
+        channel = CHANNEL_INBOX;
       }
     } else if (useCpc) {
       if (metrics.inlineLinkClicks > 0) {
         count = metrics.inlineLinkClicks;
         label = "Click Link";
+        channel = CHANNEL_CLICK;
       } else if (useCpl && inboxCount != null && inboxCount > 0) {
         count = inboxCount;
         label = "Hội thoại (Inbox)";
+        channel = CHANNEL_INBOX;
       }
     } else if (useCpl && inboxCount != null) {
       count = inboxCount;
       label = "Hội thoại (Inbox)";
+      channel = CHANNEL_INBOX;
     }
 
-    return { count, label };
+    // (H) Số dùng để NÂNG NGƯỠNG.
+    //   - Bật CPL (đơn hoặc kết hợp CPC) → nguồn DUY NHẤT là Inbox.
+    //     Không xác định được (không có tag [N1] / cache inbox chưa sẵn
+    //     sàng) → channel = "unknown" → bỏ qua lần nâng ngưỡng này.
+    //   - Còn lại → dùng đúng số đang hiển thị (Click Link / Tin nhắn).
+    let raiseCount = count;
+    if (useCpl) {
+      if (inboxCount != null) {
+        raiseCount = inboxCount;
+        channel = CHANNEL_INBOX;
+      } else {
+        raiseCount = 0;
+        channel = CHANNEL_UNKNOWN;
+      }
+    }
+
+    return { count, label, raiseCount, channel };
   }
 
   function extractTag(name) {
@@ -592,6 +905,9 @@
           cpcNum,
           resultCount: res.count,
           resultLabel: res.label,
+          // (H) Số + kênh dùng để NÂNG NGƯỠNG (tách riêng số hiển thị)
+          raiseCount: res.raiseCount,
+          raiseChannel: res.channel,
           price,
           cpc: Math.round(metrics.cpc),
           spend: metrics.spend,
@@ -732,6 +1048,182 @@
     return stale.length;
   }
 
+  /* ------------------------------------------------------------------
+   * (I) SANG NGÀY MỚI — RESET MỐC SO SÁNH + ĐƯA NGƯỠNG RIÊNG VỀ NGƯỠNG CHUNG
+   * ------------------------------------------------------------------
+   * VÌ SAO cần:
+   *   Mốc so sánh (camp_core_prev_*) lưu SỐ KQ TÍCH LUỸ TRONG NGÀY, còn
+   *   chỉ số Meta (date_preset(today)) và số hội thoại Inbox (msgTime >=
+   *   00:00 hôm nay) RESET MỖI NGÀY. Nếu không reset mốc, sang ngày mới
+   *   ta sẽ so số KQ hôm nay (bắt đầu lại từ 0) với số KQ tích luỹ của
+   *   HÔM QUA → sai lệch:
+   *     - Hôm nay ít hơn hôm qua → KHÔNG nâng ngưỡng dù có KQ mới.
+   *     - Hôm nay nhiều hơn hôm qua → chỉ nâng theo PHẦN CHÊNH LỆCH.
+   *
+   * HÀNH VI MỚI (giống hành vi "lần đầu bật CPL"):
+   *   Sang ngày mới → coi mốc cũ = 0 → lần quét đầu tiên của ngày mới
+   *   sẽ nâng ngưỡng theo TOÀN BỘ số KQ hiện có (hội thoại Inbox / click /
+   *   action của ngày mới).
+   *
+   * ĐỒNG THỜI reset ngưỡng riêng từng nhóm (fb_local_configs) về NGƯỠNG
+   * CHUNG, vì ngưỡng riêng đã bị nâng dồn lên cả ngày qua → nếu giữ, ngày
+   * mới nhóm sẽ được phép tiêu nhiều hơn hẳn so với thiết kế ban đầu.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Đưa toàn bộ ngưỡng riêng từng nhóm về NGƯỠNG CHUNG.
+   *
+   * - `maxSpend` / `maxPrice` / `maxCpm` / `maxCpc` → về giá trị chung.
+   * - `original*` cũng được đặt lại = giá trị chung (để nút "Reset" ở bảng
+   *   Chỉ Số sau này vẫn trả về đúng ngưỡng chung).
+   * - Nhóm KHÔNG có cấu hình riêng → xoá hẳn khỏi map (dùng ngưỡng chung).
+   *
+   * ⚠️ IDEMPOTENT: mỗi cấu hình được đánh dấu `__day` = ngày đã reset.
+   *    Nếu đã reset hôm nay rồi → GIỮ NGUYÊN (tránh xoá nâng ngưỡng vừa
+   *    thực hiện trong cùng ngày, ví dụ UI realtime nâng trước background).
+   *
+   * @param {object} globalCfg { maxSpend, maxPrice, maxCpm, maxCpc }
+   * @returns {Promise<number>} số nhóm đã bị reset
+   */
+  async function resetConfigsToGlobal(globalCfg = {}) {
+    const g = {
+      maxSpend: num(globalCfg.maxSpend, 10000),
+      maxPrice: num(globalCfg.maxPrice, 12000),
+      maxCpm: num(globalCfg.maxCpm, 40000),
+      maxCpc: num(globalCfg.maxCpc, 800),
+    };
+    const configs = await getConfigs();
+    const ids = Object.keys(configs || {});
+    if (!ids.length) return 0;
+
+    const today = dayKey();
+    const next = {};
+    let count = 0;
+    for (const id of ids) {
+      const cur = configs[id] || {};
+      // Đã reset hôm nay → giữ nguyên (kể cả ngưỡng đã được nâng).
+      if (String(cur.__day || "") === today) {
+        next[id] = cur;
+        continue;
+      }
+      next[id] = {
+        ...cur,
+        maxSpend: g.maxSpend,
+        maxPrice: g.maxPrice,
+        maxCpm: g.maxCpm,
+        maxCpc: g.maxCpc,
+        originalMaxSpend: g.maxSpend,
+        originalMaxPrice: g.maxPrice,
+        originalMaxCpm: g.maxCpm,
+        originalMaxCpc: g.maxCpc,
+        __day: today,
+      };
+      count++;
+    }
+    if (count > 0) await setConfigs(next);
+    return count;
+  }
+
+  /**
+   * (I) RESET MỐC SO SÁNH của TẤT CẢ kênh số (inbox / messages / click)
+   * + map legacy → lần quét kế tiếp coi mốc cũ = 0 (giống "lần đầu bật CPL").
+   *
+   * ⚠️ RESET CÓ ĐIỀU KIỆN: map nào ĐÃ có dấu ngày hôm nay ("__day") thì
+   *    GIỮ NGUYÊN — nghĩa là đã có người (background hoặc UI realtime) xử lý
+   *    ngày mới rồi → không reset lần nữa (tránh nâng ngưỡng 2 lần).
+   *
+   * @returns {Promise<string[]>} danh sách key đã bị reset
+   */
+  async function resetAllPrevMaps() {
+    const keys = [
+      ...Object.values(PREV_KEYS),
+      KEY_PREV,
+    ];
+    const today = dayKey();
+    const res = await storageGet(keys);
+    const patch = {};
+    const cleared = [];
+    for (const k of keys) {
+      const raw = res[k];
+      const mapDay = String((raw && raw[PREV_DAY_FIELD]) || "");
+      if (mapDay === today) continue; // đã xử lý ngày mới rồi → giữ nguyên
+      // Ghi map rỗng KÈM dấu ngày hôm nay → mốc = 0, và đánh dấu là của
+      // ngày hôm nay (để không bị coi là "mốc của hôm qua" lần nữa).
+      patch[k] = { [PREV_DAY_FIELD]: today };
+      cleared.push(k);
+    }
+    if (Object.keys(patch).length) await storageSet(patch);
+    return cleared;
+  }
+
+  /**
+   * (I) Đọc khoá ngày hiện tại do background giữ ("camp_core_day").
+   * Dùng để UI biết "đã sang ngày mới" → xoá cache mốc trong RAM.
+   * @returns {Promise<string>} YYYY-MM-DD ("" nếu chưa có)
+   */
+  async function getDayStamp() {
+    const res = await storageGet([KEY_DAY]);
+    return String(res[KEY_DAY] || "");
+  }
+
+  /**
+   * (I) Đọc khoá ngày (có cache trong RAM để tránh đọc storage mỗi nhóm).
+   * @returns {Promise<string>} YYYY-MM-DD ("" nếu chưa từng chạy)
+   */
+  async function getRolloverDay() {
+    if (_dayCache) return _dayCache;
+    const res = await storageGet([KEY_DAY]);
+    _dayCache = String(res[KEY_DAY] || "");
+    return _dayCache;
+  }
+
+  /**
+   * (I) Xử lý SANG NGÀY MỚI (gọi 1 lần / vòng quét, khi phát hiện ngày đổi).
+   *
+   * @param {object} globalCfg { maxSpend, maxPrice, maxCpm, maxCpc }
+   * @returns {Promise<{dayChanged:boolean, resetPrev:number, resetConfigs:number}>}
+   */
+  async function rolloverDayIfNeeded(globalCfg = {}) {
+    const today = dayKey();
+    const res = await storageGet([KEY_DAY]);
+    const lastDay = String(res[KEY_DAY] || "");
+
+    // ⭐ CHƯA TỪNG CHẠY (lần đầu tiên) → chỉ ghi nhận ngày, KHÔNG reset.
+    //    Nếu reset ở lần đầu thì ngưỡng riêng từng nhóm mà user đã cấu
+    //    hình trước đó sẽ bị xoá oan.
+    if (!lastDay) {
+      await storageSet({ [KEY_DAY]: today });
+      _dayCache = today;
+      console.log(
+        `[CAMP CORE] 📅 Khởi tạo khoá ngày (${today}) — lần chạy đầu tiên, không reset.`,
+      );
+      return { dayChanged: false, resetPrev: 0, resetConfigs: 0, firstRun: true };
+    }
+    if (lastDay === today) {
+      return { dayChanged: false, resetPrev: 0, resetConfigs: 0 };
+    }
+
+    // 1. Xoá mốc so sánh của TẤT CẢ kênh số (inbox/messages/click/legacy)
+    //    → ngày mới coi mốc cũ = 0 → nâng ngưỡng theo toàn bộ KQ ngày mới.
+    const cleared = await resetAllPrevMaps();
+
+    // 2. Đưa ngưỡng riêng từng nhóm về ngưỡng chung
+    const cfgCount = await resetConfigsToGlobal(globalCfg);
+
+    // 3. Xoá khoá chống nâng 2 lần (để ngày mới có thể nâng lại từ đầu)
+    await storageSet({ [KEY_RAISE_LOCK]: {} });
+
+    await storageSet({ [KEY_DAY]: today });
+    _dayCache = today;
+
+    console.log(
+      `[CAMP CORE] 📅 SANG NGÀY MỚI (${today}) — đã reset ${cleared.length} map mốc so sánh (${cleared.join(", ")}) ` +
+        `và đưa ${cfgCount} ngưỡng riêng về ngưỡng chung. Ngày mới coi mốc cũ = 0.`,
+    );
+
+    return { dayChanged: true, resetPrev: cleared.length, resetConfigs: cfgCount };
+  }
+
   /** Nhóm đang bị giám sát (từ cả 2 bảng) — gộp & khử trùng */
   function collectMonitored(ccState, apState) {
     const map = new Map();
@@ -822,14 +1314,55 @@
       const apState = await getAutoPauseState();
       const monitored = collectMonitored(ccState, apState);
 
+      const settings = {
+        maxSpend: num(ccState.settings?.maxSpend, apState.maxSpend),
+        maxPrice: num(ccState.settings?.maxPrice, apState.maxPrice),
+        maxCpm: num(ccState.settings?.maxCpm, apState.maxCpm),
+        maxCpc: num(ccState.settings?.maxCpc, apState.maxCpc),
+        useCpl: !!(ccState.settings?.useCpl || apState.useCpl),
+        useCpc: !!(ccState.settings?.useCpc || apState.useCpc),
+        useCpcCombo: !!(
+          ccState.settings?.useCpcCombo || apState.useCpcCombo
+        ),
+      };
+
+      // (I) SANG NGÀY MỚI — RESET MỐC SO SÁNH + ĐƯA NGƯỠNG RIÊNG VỀ NGƯỠNG CHUNG.
+      //     ⚠️ Dùng KEY RIÊNG ("camp_core_day") do BACKGROUND ghi — KHÔNG dùng
+      //        "cc_camp_state.dayStamp" vì care_camp.js (UI) cũng ghi vào đó
+      //        → tab mở qua đêm sẽ "đánh dấu" ngày mới trước background →
+      //        background không phát hiện sang ngày → không reset mốc.
+      //     Thứ tự: reset TRƯỚC bước nâng ngưỡng (bước 2) để lần quét đầu
+      //     tiên của ngày mới coi mốc cũ = 0 và nâng theo toàn bộ KQ ngày mới.
+      const rollover = await rolloverDayIfNeeded(settings);
+      if (rollover.dayChanged) {
+        pushLog(
+          state,
+          "info",
+          "-",
+          "",
+          `Sang ngày mới (${dayKey()}) — reset mốc so sánh (mốc cũ = 0) và đưa ${rollover.resetConfigs} ngưỡng riêng về ngưỡng chung.`,
+        );
+        await notifyTelegram(
+          `📅 <b>SANG NGÀY MỚI</b> 📅\n` +
+            `- Đã reset mốc đếm KQ (mốc cũ = 0)\n` +
+            `- Đã đưa ${rollover.resetConfigs} ngưỡng riêng của nhóm về ngưỡng chung\n` +
+            `- Ngày mới sẽ nâng ngưỡng theo toàn bộ KQ phát sinh trong ngày`,
+        );
+      }
+
       // (F) SANG NGÀY MỚI → xoá danh sách "đã tắt tự động" của hôm trước.
       //     KHÔNG bật lại các nhóm đó (chỉ số ngày mới đã reset về 0).
       //     Phải làm ở BACKGROUND vì extension có thể chạy khi đóng tab.
       const today = dayKey();
-      // (F) CHỈ purge khi NGÀY THỰC SỰ ĐỔI (ccState.dayStamp !== today).
-      //     Trước đây purge chạy mỗi lần quét và so từng bản ghi → quá
-      //     nhạy cảm, xoá nhầm cả nhóm vừa tắt trong ngày.
-      const dayChanged = ccState.dayStamp !== today;
+      // (F) CHỈ purge khi NGÀY THỰC SỰ ĐỔI.
+      //     Dùng `rollover.dayChanged` (khoá ngày RIÊNG do background giữ) —
+      //     KHÔNG dùng `ccState.dayStamp` vì care_camp.js (UI) cũng ghi vào đó
+      //     → tab mở qua đêm sẽ tự "đánh dấu" ngày mới → background tưởng
+      //     đã xử lý → danh sách nhóm đã tắt tự động của hôm qua KHÔNG
+      //     được xoá → background có thể BẬT LẠI NHẦM nhóm đó.
+      //     Fallback: `ccState.dayStamp !== today` cho lần chạy đầu tiên.
+      const dayChanged =
+        rollover.dayChanged || ccState.dayStamp !== today;
       if (dayChanged) {
         const staleCount = purgeStaleAutoPaused(ccState.autoPaused, today);
         const kept = (ccState.autoPaused || []).filter(
@@ -852,18 +1385,6 @@
         ccState.autoPaused = kept;
       }
 
-      const settings = {
-        maxSpend: num(ccState.settings?.maxSpend, apState.maxSpend),
-        maxPrice: num(ccState.settings?.maxPrice, apState.maxPrice),
-        maxCpm: num(ccState.settings?.maxCpm, apState.maxCpm),
-        maxCpc: num(ccState.settings?.maxCpc, apState.maxCpc),
-        useCpl: !!(ccState.settings?.useCpl || apState.useCpl),
-        useCpc: !!(ccState.settings?.useCpc || apState.useCpc),
-        useCpcCombo: !!(
-          ccState.settings?.useCpcCombo || apState.useCpcCombo
-        ),
-      };
-
       // ---- 1. GOM DỮ LIỆU ADSETS (1 lần / tài khoản) ----
       const allRows = [];
       for (const id of ids) {
@@ -873,15 +1394,36 @@
       state.rows = allRows;
 
       // ---- 2. (G) NÂNG NGƯỠNG — 1 nguồn duy nhất ----
-      const prevMap = await getPrevMap();
+      // (H) Dùng `raiseCount` + `raiseChannel` của từng nhóm:
+      //   - Chế độ CPL → chỉ nâng theo số hội thoại Inbox.
+      //   - Nếu không xác định được số (nhóm không có tag [N1] hoặc cache
+      //     inbox chưa sẵn sàng) → channel = "unknown" → BỎ QUA lần nâng
+      //     ngưỡng này (chờ lần sau), KHÔNG ghi mốc.
       for (const row of allRows) {
         if (row.error) continue;
-        const res2 = await raiseThresholdForAdset(row.adsetId, row.resultCount, {
-          maxSpend: settings.maxSpend,
-          maxPrice: settings.maxPrice,
-          maxCpm: settings.maxCpm,
-          maxCpc: settings.maxCpc,
-        });
+        const res2 = await raiseThresholdForAdset(
+          row.adsetId,
+          row.raiseCount ?? row.resultCount,
+          {
+            maxSpend: settings.maxSpend,
+            maxPrice: settings.maxPrice,
+            maxCpm: settings.maxCpm,
+            maxCpc: settings.maxCpc,
+            channel: row.raiseChannel || "",
+          },
+        );
+        if (res2.skipped) {
+          console.log(
+            `⏭️ [CAMP CORE] BỎ QUA nâng ngưỡng ${row.name} — chế độ CPL nhưng chưa xác định được số hội thoại Inbox (thiếu tag [N1] hoặc cache inbox chưa sẵn sàng).`,
+          );
+          continue;
+        }
+        if (res2.seeded) {
+          console.log(
+            `📌 [CAMP CORE] Mốc nền nhóm ${row.name}: ${row.raiseCount} HT.`,
+          );
+          continue;
+        }
         if (res2.raised) {
           console.log(
             `🚀 [CAMP CORE] Nâng ngưỡng ${row.name}: ${res2.currentMaxSpend}đ -> ${res2.newMaxSpend}đ (+${res2.diff} KQ)`,
@@ -894,7 +1436,7 @@
             `Nâng ngưỡng tiêu ${money(res2.currentMaxSpend)} → ${money(res2.newMaxSpend)} (+${res2.diff} KQ)`,
           );
           await notifyTelegram(
-            `🚀 <b>NÂNG NGƯỠNG TỰ ĐỘNG</b> 🚀\n- Nhóm: ${esc(row.name)}\n- TK: ${esc(row.accountName)}\n- KQ mới: +${res2.diff} (tổng ${row.resultCount})\n- Ngưỡng tiêu cũ: ${money(res2.currentMaxSpend)}đ\n- Ngưỡng tiêu MỚI: <b>${money(res2.newMaxSpend)}đ</b>`,
+            `🚀 <b>NÂNG NGƯỠNG TỰ ĐỘNG</b> 🚀\n- Nhóm: ${esc(row.name)}\n- TK: ${esc(row.accountName)}\n- KQ mới: +${res2.diff} (tổng ${row.raiseCount ?? row.resultCount})\n- Ngưỡng tiêu cũ: ${money(res2.currentMaxSpend)}đ\n- Ngưỡng tiêu MỚI: <b>${money(res2.newMaxSpend)}đ</b>`,
           );
         }
       }
@@ -964,6 +1506,11 @@
             cpm: row.cpm,
             cpcNum: row.cpcNum,
             result: row.resultCount,
+            // (H) Lưu thêm số theo kênh Inbox để tính "KQ mới" đúng kênh
+            raiseResult:
+              row.raiseChannel === CHANNEL_INBOX
+                ? num(row.raiseCount, 0)
+                : num(row.resultCount, 0),
             resultLabel: row.resultLabel,
             maxSpend: lim.maxSpend,
             maxPrice: lim.maxPrice,
@@ -1020,11 +1567,26 @@
           maxCpm: num(p.maxCpm, settings.maxCpm),
           maxCpc: num(p.maxCpc, settings.maxCpc),
         };
-        const prevResult = num(p.result, 0);
-        const newResults = Math.max(0, row.resultCount - prevResult);
+        // (H) Số KQ dùng để tính "KQ MỚI" phải theo ĐÚNG kênh số đang dùng.
+        //   - Kênh "inbox" → dùng số hội thoại Inbox.
+        //   - Kênh "unknown" (chế độ CPL nhưng chưa xác định được số) →
+        //     KHÔNG tính KQ mới (newResults = 0) để không nâng ngưỡng oan.
+        const resumeChannel = row.raiseChannel || "";
+        const useInboxChannel = resumeChannel === CHANNEL_INBOX;
+        const unknownChannel = resumeChannel === CHANNEL_UNKNOWN;
+        const currentCount = useInboxChannel
+          ? num(row.raiseCount, 0)
+          : num(row.resultCount, 0);
+        // Mốc KQ lúc nhóm bị tắt (lưu theo cùng kênh)
+        const prevResult = useInboxChannel
+          ? num(p.raiseResult, num(p.result, 0))
+          : num(p.result, 0);
+        const newResults = unknownChannel
+          ? 0
+          : Math.max(0, currentCount - prevResult);
         const newPrice =
-          row.resultCount > 0
-            ? Math.round(row.spend / row.resultCount)
+          !unknownChannel && currentCount > 0
+            ? Math.round(row.spend / currentCount)
             : Infinity;
 
         // Nâng ngưỡng tiêu theo số KQ mới phát sinh lúc đang bị tắt
@@ -1086,9 +1648,11 @@
         await setConfigs(cfg);
 
         // Đồng bộ mốc đếm KQ → lần sau không nâng ngưỡng 2 lần cho KQ này
-        const prevMap2 = await getPrevMap();
-        prevMap2[cid] = row.resultCount;
-        await setPrevMap(prevMap2);
+        // (H) Ghi vào map của ĐÚNG kênh số đang dùng (inbox/messages/click)
+        //     `resumeChannel` đã khai báo ở trên.
+        if (resumeChannel && resumeChannel !== CHANNEL_UNKNOWN) {
+          await setPrevForAdset(cid, currentCount, resumeChannel);
+        }
 
         // (F) Lý do bật lại (KHÔNG dùng CPM — CPM chỉ dùng để TẮT nhóm)
         const resumeReason = priceOk
@@ -1180,6 +1744,8 @@
     KEY_CC_STATE,
     KEY_AUTO_PAUSE,
     KEY_ALARM,
+    KEY_DAY,
+    KEY_RAISE_LOCK,
 
     // storage helpers
     storageGet,
@@ -1192,13 +1758,30 @@
     dayKey,
     normalizeIds,
 
-    // (G) nâng ngưỡng
+    // (H) nâng ngưỡng
     raiseThresholdForAdset,
     getPrevMap,
+    getPrevMapDay,
     setPrevMap,
+    setPrevForAdset,
+    migrateLegacyPrevMap,
     getConfigs,
     setConfigs,
     limitsFor,
+
+    // (I) sang ngày mới — reset mốc so sánh + đưa ngưỡng riêng về ngưỡng chung
+    rolloverDayIfNeeded,
+    resetAllPrevMaps,
+    resetConfigsToGlobal,
+    getDayStamp,
+
+    // (H) kênh số — dùng để tách mốc so sánh theo nguồn số
+    CHANNEL_INBOX,
+    CHANNEL_MESSAGES,
+    CHANNEL_CLICK,
+    CHANNEL_UNKNOWN,
+    PREV_KEYS,
+    PREV_DAY_FIELD,
 
     // inbox
     countInboxConversationsByTag,

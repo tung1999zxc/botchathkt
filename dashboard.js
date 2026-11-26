@@ -237,9 +237,12 @@ window.checkAndRaiseThresholdForTag = async function (tag) {
     if (!useCpl && !useCpcCombo) return;
 
     // (G) Đồng bộ mốc đếm KQ & ngưỡng từ nguồn duy nhất (CampCore/storage)
+    // (H) Đọc mốc theo KÊNH INBOX — realtime chỉ đếm hội thoại Inbox.
     if (window.CampCore) {
       try {
-        const prevMap = await window.CampCore.getPrevMap();
+        const prevMap = await window.CampCore.getPrevMap(
+          window.CampCore.CHANNEL_INBOX || "inbox",
+        );
         window.prevHieuQua = { ...(window.prevHieuQua || {}), ...prevMap };
         window.localConfigs = await window.CampCore.getConfigs();
       } catch (e) {
@@ -275,6 +278,8 @@ window.checkAndRaiseThresholdForTag = async function (tag) {
       if (!adsetId) continue;
 
       const inboxCount = await window.countInboxConversationsByTag(adsetName);
+      // (H) Không xác định được số hội thoại (thiếu tag [N1] / cache inbox
+      //     chưa sẵn sàng) → BỎ QUA lần nâng ngưỡng này, chờ lần sau.
       if (inboxCount === null) continue;
 
       // Dùng hàm nâng ngưỡng dùng chung (nguồn: localStorage["fb_local_configs"])
@@ -286,6 +291,8 @@ window.checkAndRaiseThresholdForTag = async function (tag) {
           maxPrice: globalMaxPrice,
           maxCpm: globalMaxCpm,
           maxCpc: window.getGlobalMaxCpc ? window.getGlobalMaxCpc() : 800,
+          // (H) Realtime chỉ đếm HỘI THOẠI INBOX → dùng mốc "inbox"
+          channel: window.CampCore?.CHANNEL_INBOX || "inbox",
         },
       );
 
@@ -469,13 +476,18 @@ window.raiseThresholdForAdset = async function (
 
   const cur = Number(effectiveCount) || 0;
 
+  // (H) KÊNH SỐ — quyết định map mốc so sánh nào dùng:
+  //   "inbox" | "messages" | "click" | "unknown"
+  //   "unknown" → KHÔNG xác định được số KQ → bỏ qua lần nâng ngưỡng này.
+  const channel = opts.channel || "";
+
   // ⚠️ (G) ƯU TIÊN CampCore — NGUỒN NÂNG NGƯỠNG DUY NHẤT.
-  //    Mốc so sánh (prev) nằm trong chrome.storage.local["camp_core_prev"]
+  //    Mốc so sánh (prev) nằm trong chrome.storage.local["camp_core_prev*"]
   //    do background (camp_core.js) quản lý → mỗi lần KQ tăng chỉ nâng ngưỡng
   //    ĐÚNG 1 LẦN, không nhân đôi khi cả bảng 📊 và ✂️ cùng chạy.
   if (window.CampCore?.raiseThresholdForAdset) {
     // (G) NGUỒN NÂNG NGƯỠNG DUY NHẤT: CampCore (dùng chung cả background
-    //     và UI). Mốc so sánh nằm trong chrome.storage.local["camp_core_prev"]
+    //     và UI). Mốc so sánh nằm trong chrome.storage.local["camp_core_prev*"]
     //     → mỗi lần KQ tăng chỉ nâng ngưỡng ĐÚNG 1 LẦN.
     const res = await window.CampCore.raiseThresholdForAdset(id, cur, opts);
     if (res?.raised) {
@@ -486,9 +498,14 @@ window.raiseThresholdForAdset = async function (
       }
     }
     // Ghi mốc cục bộ (để lần gọi kế tiếp không nâng trùng)
-    window.prevHieuQua[id] = cur;
+    // (H) Chỉ ghi mốc cục bộ khi CHẮC CHẮN đã xác định số KQ — trường
+    //     hợp "unknown" thì để CampCore quản lý mốc.
+    if (!res?.skipped) {
+      window.prevHieuQua[id] = cur;
+    }
     return {
       raised: !!res?.raised,
+      skipped: !!res?.skipped,
       diff: res?.diff || 0,
       currentMaxSpend: res?.currentMaxSpend || 0,
       newMaxSpend: res?.newMaxSpend || 0,
@@ -499,15 +516,31 @@ window.raiseThresholdForAdset = async function (
   }
 
   // ---- Fallback (không có CampCore) — logic cũ, mốc nằm trong memory ----
-  const prev = window.prevHieuQua[id];
+  // (H) Không xác định được số KQ → bỏ qua lần nâng ngưỡng này (chờ lần sau)
+  if (channel === window.CampCore?.CHANNEL_UNKNOWN || channel === "unknown") {
+    return { raised: false, skipped: true, diff: 0 };
+  }
+
+  // (H) Mốc cục bộ TÁCH THEO KÊNH — tránh so số "Tin nhắn" với số Inbox.
+  if (!window.prevHieuQuaByChannel) window.prevHieuQuaByChannel = {};
+  const chanKey = channel || "legacy";
+  if (!window.prevHieuQuaByChannel[chanKey]) {
+    window.prevHieuQuaByChannel[chanKey] = {};
+  }
+  const chanMap = window.prevHieuQuaByChannel[chanKey];
+
+  const prev = chanMap[id];
 
   // (G) Chưa có mốc so sánh → coi mốc cũ = 0 (khớp với camp_core.js)
   //     Nhóm đã có KQ ngay từ lần quét đầu tiên vẫn được nâng ngưỡng.
+  //     (H) Mốc của mỗi kênh là RIÊNG → lần đầu bật CPL, mốc kênh "inbox"
+  //     chưa có → coi mốc cũ = 0 → nâng ngưỡng theo số hội thoại Inbox.
   const hasPrev = prev !== undefined;
   const prevCount = hasPrev ? Number(prev) || 0 : 0;
 
   // KQ không tăng (và đã có mốc) → không nâng
   if (hasPrev && cur <= prevCount) {
+    chanMap[id] = cur;
     window.prevHieuQua[id] = cur;
     return { raised: false, diff: 0, currentMaxSpend: 0, newMaxSpend: 0 };
   }
@@ -516,6 +549,7 @@ window.raiseThresholdForAdset = async function (
 
   // diff <= 0 → không có gì để nâng (VD nhóm mới, chưa có KQ nào)
   if (diff <= 0) {
+    chanMap[id] = cur;
     window.prevHieuQua[id] = cur;
     return { raised: false, diff: 0, currentMaxSpend: 0, newMaxSpend: 0 };
   }
@@ -552,6 +586,7 @@ window.raiseThresholdForAdset = async function (
   }
 
   // Cập nhật mốc so sánh
+  chanMap[id] = cur;
   window.prevHieuQua[id] = cur;
 
   return {
@@ -2377,6 +2412,17 @@ document.addEventListener("DOMContentLoaded", async () => {
           try {
             if (window.CampCore) {
               window.localConfigs = await window.CampCore.getConfigs();
+              // (I) Khi background vừa reset ngưỡng về ngưỡng chung (sang
+              //     ngày mới) → ghi lại xuống localStorage để UI hiển thị
+              //     đúng ngưỡng mới (SW không có localStorage).
+              try {
+                localStorage.setItem(
+                  "fb_local_configs",
+                  JSON.stringify(window.localConfigs || {}),
+                );
+              } catch (e) {
+                /* bỏ qua */
+              }
             }
           } catch (e) {
             /* bỏ qua */
@@ -2384,6 +2430,38 @@ document.addEventListener("DOMContentLoaded", async () => {
           renderScanFromCache("ACTIVE");
         }
       });
+    } catch (e) {
+      /* bỏ qua */
+    }
+
+    // (I) THEO DÕI NGÀY LÀM VIỆC — khi background báo đã sang ngày mới
+    //     → xoá cache mốc đếm KQ trong RAM (window.prevHieuQua) để lần
+    //     tính tiếp theo coi mốc cũ = 0 (khớp với background).
+    try {
+      let lastDay = "";
+      const checkDayRollover = async () => {
+        try {
+          const today = window.CampCore?.dayKey
+            ? window.CampCore.dayKey()
+            : new Date().toISOString().slice(0, 10);
+          if (!lastDay) {
+            lastDay = today;
+            return;
+          }
+          if (lastDay !== today) {
+            lastDay = today;
+            window.prevHieuQua = {};
+            window.prevHieuQuaByChannel = {};
+            console.log(
+              "[Dashboard] 📅 Sang ngày mới — đã xoá cache mốc đếm KQ trong RAM.",
+            );
+          }
+        } catch (e) {
+          /* bỏ qua */
+        }
+      };
+      setInterval(checkDayRollover, 30000);
+      checkDayRollover();
     } catch (e) {
       /* bỏ qua */
     }
@@ -2562,7 +2640,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       apUseCplEl.checked = savedUseCpl === "true";
       window.autoPauseConfig.useCpl = apUseCplEl.checked;
     }
-    apUseCplEl.addEventListener("change", () => {
+    apUseCplEl.addEventListener("change", async () => {
+      const wasCplOn = window.autoPauseConfig.useCpl === true;
       localStorage.setItem("fb_ap_use_cpl", apUseCplEl.checked);
       window.autoPauseConfig.useCpl = apUseCplEl.checked;
       // Đồng bộ cờ chế độ CPL sang bảng "Tắt Camp Tự Động"
@@ -2570,6 +2649,22 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (ccCpl && ccCpl.checked !== apUseCplEl.checked) {
         ccCpl.checked = apUseCplEl.checked;
         ccCpl.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      // (H) BẬT CPL (TẮT → BẬT) → xóa mốc so sánh kênh "inbox" để lần
+      //     quét kế tiếp coi mốc cũ = 0 và nâng ngưỡng theo số hội thoại
+      //     Inbox hiện có. Các lần sau chỉ nâng theo hội thoại MỚI.
+      if (apUseCplEl.checked && !wasCplOn) {
+        try {
+          const cc = window.CampCore;
+          if (cc?.setPrevMap) {
+            await cc.setPrevMap({}, cc.CHANNEL_INBOX || "inbox");
+            console.log(
+              "[Auto-Pause] ♻️ Đã xóa mốc so sánh kênh Inbox (bật CPL) — lần quét tới sẽ coi mốc cũ = 0 và nâng ngưỡng.",
+            );
+          }
+        } catch (e) {
+          /* bỏ qua */
+        }
       }
       console.log(
         `📣 [Auto-Pause] Chế độ CPL: ${apUseCplEl.checked ? "BẬT" : "TẮT"}`,

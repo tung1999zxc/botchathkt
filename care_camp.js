@@ -1364,14 +1364,13 @@
     }
   }
 
-  async function doStartMonitoring() {
-    const checked = Array.from(
-      document.querySelectorAll("#ccTableBody .cc-check:checked"),
-    ).map((c) => c.value);
-    if (!checked.length) return toast("❌ Hãy tick ít nhất 1 nhóm quảng cáo.", "err");
-
+  /**
+   * Dựng danh sách nhóm giám sát từ mảng adsetId đã chọn.
+   * Dùng chung cho nút "LƯU & BẮT ĐẦU GIÁM SÁT" và nút nhanh "GIÁM SÁT TẤT CẢ".
+   */
+  function buildMonitorList(checked) {
     const s = state.settings;
-    const list = checked.map((adsetId) => {
+    return checked.map((adsetId) => {
       const row = state.rows.find((r) => String(r.adsetId) === String(adsetId));
       const rowEl = document.querySelector(
         `#ccTableBody input.cc-check[value="${CSS.escape(adsetId)}"]`,
@@ -1402,15 +1401,86 @@
         limits: lim,
       };
     });
+  }
+
+  /**
+   * Bắt đầu giám sát với danh sách nhóm đã chọn.
+   * @param {string[]} checked  Danh sách adsetId
+   */
+  async function startMonitoringWith(checked, label = "nhóm") {
+    if (!checked.length)
+      return toast("❌ Hãy tick ít nhất 1 nhóm quảng cáo.", "err");
+
+    const list = buildMonitorList(checked);
 
     state.monitored = list;
     state.running = true;
     await saveState(true);
     renderAll();
     startTimer();
-    toast(`🚀 Đang giám sát ${list.length} nhóm.`, "ok");
+    toast(`🚀 Đang giám sát ${list.length} ${label}.`, "ok");
     // (D) Quét sẽ do background thực hiện qua alarm 1 phút
     doScan(true);
+  }
+
+  async function doStartMonitoring() {
+    const checked = Array.from(
+      document.querySelectorAll("#ccTableBody .cc-check:checked"),
+    ).map((c) => c.value);
+    await startMonitoringWith(checked, "nhóm");
+  }
+
+  /**
+   * ⚡ NÚT NHANH: giám sát TẤT CẢ nhóm đang bật — không cần tick tay.
+   *
+   * Lấy đúng danh sách nhóm đang hiển thị trong bảng (nhóm ACTIVE + chiến
+   * dịch ACTIVE). Nếu bảng chưa được tải → tự động tải danh sách trước.
+   */
+  async function doMonitorAll() {
+    const btn = $("ccBtnMonitorAll");
+    let rows = state.rows.filter(
+      (r) => !r.error && !r.isPaused && r.isCampaignActive,
+    );
+
+    // Chưa có dữ liệu → tự động tải danh sách nhóm trước khi giám sát
+    if (!rows.length) {
+      toast("⏳ Đang tải danh sách nhóm... (giám sát tất cả)", "info");
+      await doLoadAdsets();
+      rows = state.rows.filter(
+        (r) => !r.error && !r.isPaused && r.isCampaignActive,
+      );
+    }
+
+    if (!rows.length)
+      return toast("❌ Không có nhóm nào đang bật để giám sát.", "err");
+
+    // Đồng bộ tick trên bảng cho khớp danh sách đang giám sát
+    const ids = rows.map((r) => String(r.adsetId));
+    document
+      .querySelectorAll("#ccTableBody .cc-check")
+      .forEach((cb) => (cb.checked = ids.includes(String(cb.value))));
+    const all = $("ccSelectAll");
+    if (all) all.checked = true;
+
+    if (btn) btn.disabled = true;
+    try {
+      await startMonitoringWith(ids, "nhóm đang bật");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  /**
+   * 🛑 BỎ giám sát toàn bộ nhóm đang theo dõi (nhưng KHÔNG tắt chế độ quét).
+   */
+  async function doUnmonitorAll() {
+    if (!state.monitored.length)
+      return toast("ℹ️ Đang không có nhóm nào được giám sát.", "info");
+    const n = state.monitored.length;
+    state.monitored = [];
+    await saveState(true);
+    renderAll();
+    toast(`🛑 Đã bỏ giám sát ${n} nhóm.`, "ok");
   }
 
   async function doStopMonitoring() {
@@ -2359,6 +2429,9 @@
     $("ccBtnStop")?.addEventListener("click", doStopMonitoring);
     $("ccBtnScan")?.addEventListener("click", () => doScan(false));
     $("ccBtnRescan")?.addEventListener("click", () => doScan(false));
+    // ⚡ Nút nhanh giám sát / bỏ giám sát toàn bộ nhóm
+    $("ccBtnMonitorAll")?.addEventListener("click", doMonitorAll);
+    $("ccBtnUnmonitorAll")?.addEventListener("click", doUnmonitorAll);
     $("ccSelectAll")?.addEventListener("change", (e) => {
       document
         .querySelectorAll("#ccTableBody .cc-check")

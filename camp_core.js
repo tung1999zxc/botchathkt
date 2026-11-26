@@ -168,6 +168,85 @@
     });
   }
 
+  /* ------------------------------------------------------------------
+   * (A1) PHIÊN GỘP STORAGE — gộp hàng loạt đọc/ghi storage
+   * ------------------------------------------------------------------
+   * VẤN ĐỀ: Trước đây mỗi NHÓM gọi raiseThresholdForAdset() sẽ đọc/ghi
+   *   storage ~5-6 lần (đọc ngưỡng, đọc/ghi khoá, đọc/ghi mốc so sánh).
+   *   Với 5 TK × 200 nhóm = 1000 nhóm → ~6000 lượt storage op mỗi vòng quét.
+   *
+   * GIẢI PHÁP: Mở "phiên" khi bắt đầu vòng quét → cache trong RAM:
+   *   - KEY_CONFIGS (ngưỡng từng nhóm)
+   *   - Tất cả map mốc so sánh (theo kênh số + legacy)
+   * Mọi đọc trong phiên → đọc từ RAM; mọi ghi → ghi vào RAM + đánh dấu
+   * "bẩn". Khi kết thúc phiên → ghi TẤT CẢ 1 LẦN bằng 1 storageSet.
+   *
+   * → Giảm ~6000 lượt storage op xuống ~5.
+   *
+   * ⚠️ AN TOÀN:
+   *   - Nếu không mở phiên (VD gọi từ dashboard.js) → hành vi CŨ, không đổi.
+   *   - Phiên luôn được flush trong `finally` → không mất dữ liệu khi lỗi.
+   *   - KHOÁ CHỐNG NÂNG 2 LẦN (KEY_RAISE_LOCK) KHÔNG gộp trong phiên:
+   *     phải đọc/ghi storage ngay để chặn đúng trường hợp background và
+   *     UI realtime nâng cùng lúc (nếu gộp RAM → background không thấy
+   *     khoá của UI → nâng đôi).
+   * ---------------------------------------------------------------- */
+  let _sess = null;
+
+  /** Mở phiên gộp storage (gọi 1 lần / vòng quét) */
+  function startStorageSession() {
+    if (_sess) return;
+    const prevKeys = Object.values(PREV_KEYS || {});
+    _sess = {
+      ready: null,
+      configs: {},
+      configsDirty: false,
+      prevRaw: {}, // key -> map raw
+      prevDirty: {}, // key -> true
+    };
+    // Nạp sẵn TẤT CẢ key cần dùng trong 1 lần đọc duy nhất.
+    const keys = [KEY_CONFIGS, KEY_PREV, ...prevKeys];
+    _sess.ready = storageGet(keys).then((res) => {
+      if (!_sess) return;
+      _sess.configs =
+        res[KEY_CONFIGS] && typeof res[KEY_CONFIGS] === "object"
+          ? res[KEY_CONFIGS]
+          : {};
+      // Fallback: nếu storage chưa có ngưỡng → lấy từ mirror localStorage
+      // (chỉ có ở tab dashboard; SW không có localStorage).
+      if (!Object.keys(_sess.configs).length) {
+        const local = readLocalStorageConfigs();
+        if (Object.keys(local).length) _sess.configs = local;
+      }
+      for (const k of [KEY_PREV, ...prevKeys]) {
+        _sess.prevRaw[k] =
+          res[k] && typeof res[k] === "object" ? res[k] : {};
+      }
+    });
+  }
+
+  /** Đóng phiên + ghi toàn bộ thay đổi xuống storage (1 lần duy nhất) */
+  async function flushStorageSession() {
+    const s = _sess;
+    _sess = null;
+    if (!s) return;
+    try {
+      await s.ready;
+    } catch (e) {
+      /* bỏ qua */
+    }
+    const patch = {};
+    if (s.configsDirty) patch[KEY_CONFIGS] = s.configs;
+    for (const k of Object.keys(s.prevRaw)) {
+      if (s.prevDirty[k]) patch[k] = s.prevRaw[k];
+    }
+    if (!Object.keys(patch).length) return;
+    await storageSet(patch);
+    console.log(
+      `[CAMP CORE] 💾 Đã ghi gộp ${Object.keys(patch).length} key xuống storage (1 lần).`,
+    );
+  }
+
   /** Chuẩn hoá danh sách ID tài khoản → luôn có tiền tố "act_" */
   function normalizeIds(raw) {
     if (!raw) return [];
@@ -214,6 +293,10 @@
   async function readPrevMapRaw(channel) {
     const key = channel ? PREV_KEYS[channel] : KEY_PREV;
     if (!key) return {};
+    if (_sess) {
+      await _sess.ready;
+      return _sess.prevRaw[key] || {};
+    }
     const res = await storageGet([key]);
     return res[key] && typeof res[key] === "object" ? res[key] : {};
   }
@@ -249,7 +332,12 @@
     const key = PREV_KEYS[channel];
     if (!key) return false;
 
-    const res = await storageGet([key, KEY_PREV]);
+    const res = _sess
+      ? (await _sess.ready, {
+          [key]: _sess.prevRaw[key] || {},
+          [KEY_PREV]: _sess.prevRaw[KEY_PREV] || {},
+        })
+      : await storageGet([key, KEY_PREV]);
     const current = res[key];
     // Map kênh đã có dữ liệu → không migrate (tránh ghi đè mốc đúng)
     if (current && typeof current === "object" && Object.keys(current).length) {
@@ -266,7 +354,14 @@
     const copy = { ...legacy };
     delete copy[PREV_DAY_FIELD];
     copy[PREV_DAY_FIELD] = dayKey();
-    await storageSet({ [key]: copy });
+    if (_sess) {
+      // (A1) Trong phiên → ghi vào RAM, flush 1 lần cuối.
+      await _sess.ready;
+      _sess.prevRaw[key] = copy;
+      _sess.prevDirty[key] = true;
+    } else {
+      await storageSet({ [key]: copy });
+    }
     console.log(
       `[CAMP CORE] ♻️ Đã migrate mốc so sánh legacy → kênh "${channel}" (${Object.keys(legacy).length} nhóm).`,
     );
@@ -282,9 +377,19 @@
   async function setPrevMap(map, channel) {
     const key = channel ? PREV_KEYS[channel] : KEY_PREV;
     if (!key) return;
-    const clean = { ...(map || {}) };
     // (I) Luôn gắn dấu ngày hiện tại → giúp phát hiện "mốc thuộc hôm qua"
     //     khi sang ngày mới (mốc cũ = 0).
+    if (_sess) {
+      // (A1) Trong phiên → KHÔNG copy map (tránh O(n) mỗi nhóm),
+      //     sửa tại chỗ trên map của phiên rồi đánh dấu bẩn.
+      await _sess.ready;
+      const target = map && typeof map === "object" ? map : {};
+      target[PREV_DAY_FIELD] = dayKey();
+      _sess.prevRaw[key] = target;
+      _sess.prevDirty[key] = true;
+      return;
+    }
+    const clean = { ...(map || {}) };
     clean[PREV_DAY_FIELD] = dayKey();
     await storageSet({ [key]: clean });
   }
@@ -301,6 +406,15 @@
   async function setPrevForAdset(adsetId, value, channel) {
     const key = channel ? PREV_KEYS[channel] : KEY_PREV;
     if (!key) return;
+    if (_sess) {
+      // (A1) Trong phiên → sửa trực tiếp map của phiên (không copy O(n)).
+      await _sess.ready;
+      const target = _sess.prevRaw[key] || (_sess.prevRaw[key] = {});
+      target[String(adsetId)] = num(value, 0);
+      target[PREV_DAY_FIELD] = dayKey();
+      _sess.prevDirty[key] = true;
+      return;
+    }
     const raw = await readPrevMapRaw(channel);
     const map = {};
     for (const k of Object.keys(raw)) {
@@ -389,6 +503,8 @@
         await resetAllPrevMaps();
         prevReset = true;
         await resetConfigsToGlobal(opts);
+        // ⚠️ Khoá nâng được đọc/ghi TRỰC TIẾP storage (để chống nâng 2 lần
+        //    với UI realtime) → reset cũng phải ghi thẳng storage.
         await storageSet({ [KEY_RAISE_LOCK]: {} });
         await storageSet({ [KEY_DAY]: today });
         _dayCache = today;
@@ -415,7 +531,23 @@
     const configs = prevReset ? await getConfigs() : configsIn;
 
     // (I) Đọc LẠI mốc sau khi có thể đã xoá (sang ngày mới).
-    const prevMap = prevReset ? {} : await getPrevMap(channel);
+    // (A1) Trong phiên gộp → dùng TRỰC TIẾP map trong RAM (không copy
+    //     O(n) cho mỗi nhóm) → ghi xuống storage 1 lần lúc flush.
+    let prevMap;
+    if (_sess) {
+      // (A1) Dùng TRỰC TIẾP map của phiên (không copy O(n) cho mỗi nhóm).
+      //     Sau khi reset ngày, map đã được resetAllPrevMaps() ghi rỗng
+      //     (chỉ còn field "__day") → mỗi nhóm cộng dồn mốc của mình vào
+      //     cùng 1 map → không ghi đè mốc của nhóm khác.
+      await _sess.ready;
+      const pKey = channel ? PREV_KEYS[channel] : KEY_PREV;
+      if (!pKey) prevMap = {};
+      else prevMap = _sess.prevRaw[pKey] || (_sess.prevRaw[pKey] = {});
+    } else if (prevReset) {
+      prevMap = {};
+    } else {
+      prevMap = await getPrevMap(channel);
+    }
     const cur = num(effectiveCount, 0);
 
     // (H) CHƯA CÓ MỐC SO SÁNH cho kênh này → coi mốc cũ = 0 và nâng
@@ -512,6 +644,11 @@
     //     cả hai đều thấy diff > 0 → cả hai đều nâng).
     //     Dùng khoá lưu trong storage: ai giành được khoá thì mới nâng.
     const lockKey = `${channel || "legacy"}:${id}`;
+    // ⚠️ KHOÁ PHẢI ĐỌC/GHI STORAGE NGAY (không gộp trong phiên):
+    //    UI realtime (dashboard.js) cũng gọi raiseThresholdForAdset → nếu
+    //    background chỉ đọc lock trong RAM, nó sẽ KHÔNG thấy khoá do UI vừa
+    //    giành → cả hai cùng nâng → nhân đôi ngưỡng.
+    //    → Đọc/ghi trực tiếp storage (giữ nguyên hành vi cũ, an toàn tuyệt đối).
     const lockRes = await storageGet([KEY_RAISE_LOCK]);
     const locks = lockRes[KEY_RAISE_LOCK] || {};
     const nowTs = Date.now();
@@ -608,6 +745,10 @@
    *    Nếu chưa có trong storage → fallback đọc localStorage (chạy ở tab).
    */
   async function getConfigs() {
+    if (_sess) {
+      await _sess.ready;
+      return _sess.configs || {};
+    }
     const res = await storageGet([KEY_CONFIGS]);
     const stored = res[KEY_CONFIGS];
     if (stored && typeof stored === "object" && Object.keys(stored).length) {
@@ -624,6 +765,12 @@
   /** Ghi cấu hình ngưỡng — ghi cả storage (chuẩn) và localStorage (mirror UI) */
   async function setConfigs(cfg) {
     const clean = cfg && typeof cfg === "object" ? cfg : {};
+    if (_sess) {
+      await _sess.ready;
+      _sess.configs = clean;
+      _sess.configsDirty = true;
+      return;
+    }
     await storageSet({ [KEY_CONFIGS]: clean });
     writeLocalStorageConfigs(clean);
   }
@@ -703,56 +850,119 @@
   }
 
   /* ------------------------------------------------------------------
-   * ĐẾM HỘI THOẠI INBOX THEO TAG (đọc cache — KHÔNG gọi API Meta)
+   * (A2) ĐẾM HỘI THOẠI INBOX THEO TAG — CACHE TRONG RAM + INDEX TAG
+   * ------------------------------------------------------------------
+   * VẤN ĐỀ (cũ): mỗi NHÓM gọi countInboxConversationsByTag() sẽ đọc
+   *   TOÀN BỘ "inboxBgCache" (có thể vài MB) từ chrome.storage → Chrome
+   *   phải deserialize lại mỗi lần. 500 nhóm × 1 cache = 500 lần
+   *   deserialize + 500 lượt storage.
+   *
+   * GIẢI PHÁP:
+   *   1) Đọc cache inbox 1 LẦN → dựng INDEX tag → Map<tag, Set<convId>>.
+   *   2) Giữ index trong RAM (TTL 60s) → tra cứu O(1) theo tag.
+   *   3) Trong vòng quét (session), index được nạp sẵn 1 lần và dùng
+   *      chung cho MỌI nhóm → 0 lượt storage cho phần đếm CPL.
+   *
+   * → Giảm ~500 lượt deserialize + ~500 lượt storage xuống ~1.
    * ---------------------------------------------------------------- */
-  async function countInboxConversationsByTag(adsetName) {
+  const INBOX_INDEX_TTL_MS = 60000; // index inbox dùng lại trong 60s
+  let _inboxIndex = null; // { at: number, index: Map<string, Set<string>> }
+  let _inboxIndexList = []; // danh sách hội thoại (để fallback đếm tuần tự)
+
+  /** Dựng index tag từ danh sách hội thoại inbox */
+  function buildInboxTagIndex(inboxList) {
+    const index = new Map();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const TAG_RE = /\[([A-Za-z0-9_\-]+)\]/g;
+
+    for (const conv of inboxList) {
+      if (!conv || !conv.id) continue;
+      const convId = String(conv.id);
+      const messages = conv.messages?.data || [];
+      for (const msg of messages) {
+        const msgTime = msg.created_time ? new Date(msg.created_time) : null;
+        // Chỉ tính tin nhắn HÔM NAY (khớp logic cũ)
+        if (!msgTime || msgTime < today) continue;
+        const msgText = (msg.message || "").toUpperCase();
+        const adTitle = (
+          msg.referral?.ads_context_data?.ad_title || ""
+        ).toUpperCase();
+        const haystacks = [msgText, adTitle];
+        for (const hay of haystacks) {
+          if (!hay) continue;
+          TAG_RE.lastIndex = 0;
+          let m;
+          while ((m = TAG_RE.exec(hay)) !== null) {
+            const tag = m[1].trim().toUpperCase();
+            if (!tag) continue;
+            let set = index.get(tag);
+            if (!set) {
+              set = new Set();
+              index.set(tag, set);
+            }
+            set.add(convId);
+          }
+        }
+      }
+    }
+    return index;
+  }
+
+  /**
+   * Lấy index tag của inbox (đọc cache storage 1 lần, cache trong RAM).
+   * @param {boolean} [force] bỏ qua TTL, đọc lại storage
+   * @returns {Promise<{index: Map<string, Set<string>>, list: Array}>}
+   */
+  async function getInboxTagIndex(force = false) {
+    const fresh =
+      _inboxIndex &&
+      !force &&
+      Date.now() - (_inboxIndex.at || 0) < INBOX_INDEX_TTL_MS;
+    if (fresh) {
+      return { index: _inboxIndex.index, list: _inboxIndexList };
+    }
+    const res = await storageGet(["inboxBgCache"]);
+    const list = Array.isArray(res.inboxBgCache) ? res.inboxBgCache : [];
+    const index = buildInboxTagIndex(list);
+    _inboxIndex = { at: Date.now(), index };
+    _inboxIndexList = list;
+    return { index, list };
+  }
+
+  /** Nạp sẵn index inbox (gọi 1 lần đầu vòng quét) */
+  async function preloadInboxTagIndex() {
+    try {
+      await getInboxTagIndex(true);
+    } catch (e) {
+      /* bỏ qua */
+    }
+  }
+
+  /** Xoá cache index inbox (gọi khi cache inbox trong storage bị thay đổi) */
+  function invalidateInboxTagIndex() {
+    _inboxIndex = null;
+    _inboxIndexList = [];
+  }
+
+  async function countInboxConversationsByTag(adsetName, preloaded) {
     try {
       if (!adsetName || typeof adsetName !== "string") return null;
       const tagMatch = adsetName.match(/\[([A-Za-z0-9_\-]+)\]/i);
       if (!tagMatch) return null;
       const tag = tagMatch[1].trim().toUpperCase();
-      const tagBracket = `[${tag}]`;
 
-      const res = await storageGet(["inboxBgCache"]);
-      const inboxList = Array.isArray(res.inboxBgCache)
-        ? res.inboxBgCache
-        : [];
-      if (inboxList.length === 0) return null;
+      // (A2) Dùng index có sẵn (RAM) — không đọc storage.
+      const { index, list } =
+        preloaded && preloaded.index
+          ? preloaded
+          : await getInboxTagIndex();
+      if (!list.length) return null;
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const countedConvIds = new Set();
-      let count = 0;
-
-      for (const conv of inboxList) {
-        if (!conv || !conv.id) continue;
-        const convId = String(conv.id);
-        let hasTag = false;
-        const messages = conv.messages?.data || [];
-        for (const msg of messages) {
-          const msgText = (msg.message || "").toUpperCase();
-          const adTitle = (
-            msg.referral?.ads_context_data?.ad_title || ""
-          ).toUpperCase();
-          if (
-            msgText.includes(tagBracket) ||
-            adTitle.includes(tagBracket)
-          ) {
-            const msgTime = msg.created_time
-              ? new Date(msg.created_time)
-              : null;
-            if (msgTime && msgTime >= today) {
-              hasTag = true;
-              break;
-            }
-          }
-        }
-        if (hasTag && !countedConvIds.has(convId)) {
-          countedConvIds.add(convId);
-          count++;
-        }
-      }
-      return count;
+      // Index đã quét TOÀN BỘ tin nhắn hôm nay → tra cứu O(1).
+      // Không có tag trong index ⇒ chắc chắn 0 hội thoại khớp.
+      const set = index.get(tag);
+      return set ? set.size : 0;
     } catch (e) {
       return null;
     }
@@ -965,9 +1175,11 @@
    *        bản gốc (lọc effective_status) → KHÔNG bỏ sót nhóm nào.
    *      - Lọc tay lần nữa trong vòng for để chắc chắn không lọt nhóm của CD tắt.
    */
-  async function fetchAdsetsForAccount(token, accountId, settings) {
+  async function fetchAdsetsForAccount(token, accountId, settings, ctx = {}) {
     const statuses = ["ACTIVE", "PAUSED"];
     const out = [];
+    // (A2) Index tag inbox dùng chung cho mọi nhóm (nạp 1 lần / vòng quét)
+    const inboxCtx = ctx.inboxIndex || null;
 
     try {
       // ⭐ Dùng cache tên TK trong RAM (tiết kiệm 1 API call / TK / vòng quét)
@@ -1104,7 +1316,10 @@
 
         let inboxCount = null;
         if (settings.useCpl || settings.useCpcCombo) {
-          inboxCount = await countInboxConversationsByTag(adset.name);
+          inboxCount = await countInboxConversationsByTag(
+            adset.name,
+            inboxCtx,
+          );
         }
 
         const res = pickResult(
@@ -1468,7 +1683,17 @@
       patch[k] = { [PREV_DAY_FIELD]: today };
       cleared.push(k);
     }
-    if (Object.keys(patch).length) await storageSet(patch);
+    if (!Object.keys(patch).length) return cleared;
+    if (_sess) {
+      // (A1) Trong phiên → chỉ cập nhật RAM, ghi 1 lần lúc flush.
+      await _sess.ready;
+      for (const k of Object.keys(patch)) {
+        _sess.prevRaw[k] = patch[k];
+        _sess.prevDirty[k] = true;
+      }
+      return cleared;
+    }
+    await storageSet(patch);
     return cleared;
   }
 
@@ -1710,9 +1935,21 @@
       }
 
       // ---- 1. GOM DỮ LIỆU ADSETS (1 lần / tài khoản) ----
+      // (A1) Mở phiên gộp storage → các lần đọc/ghi ngưỡng, khoá, mốc
+      //      so sánh trong vòng quét này dùng RAM, ghi xuống storage 1 lần.
+      startStorageSession();
+      // (A2) Nạp sẵn index tag inbox 1 LẦN → không đọc/deserialize
+      //      "inboxBgCache" cho từng nhóm nữa.
+      if (settings.useCpl || settings.useCpcCombo) {
+        await preloadInboxTagIndex();
+      }
+      const inboxIndex = await getInboxTagIndex();
+
       const allRows = [];
       for (const id of ids) {
-        const rows = await fetchAdsetsForAccount(token, id, settings);
+        const rows = await fetchAdsetsForAccount(token, id, settings, {
+          inboxIndex,
+        });
         allRows.push(...rows);
       }
       // 🔒 AN TOÀN: KHÔNG ghi đè cache bằng mảng RỖNG.
@@ -2055,6 +2292,12 @@
       console.error("[CAMP CORE] ❌ Lỗi quét:", e);
       return { ok: false, error: state.error };
     } finally {
+      // (A1) Ghi gộp toàn bộ thay đổi xuống storage (1 lần duy nhất).
+      try {
+        await flushStorageSession();
+      } catch (e) {
+        /* bỏ qua */
+      }
       _scanInFlight = false;
     }
   }
@@ -2137,6 +2380,13 @@
 
     // inbox
     countInboxConversationsByTag,
+    // (A2) index tag inbox trong RAM
+    getInboxTagIndex,
+    preloadInboxTagIndex,
+    invalidateInboxTagIndex,
+    // (A1) phiên gộp storage
+    startStorageSession,
+    flushStorageSession,
 
     // (F) state dùng chung
     getState,

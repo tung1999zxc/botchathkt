@@ -79,6 +79,95 @@ window.getHieuQuaCount = function (insights, optimization_goal) {
 };
 
 // ================================================================
+// 🧩 (B1) RENDER BẢNG THEO LÔ (CHUNKED RENDERING)
+// ---------------------------------------------------------------
+// VẤN ĐỀ: Bảng "Chỉ Số" có thể chứa 500-1000 dòng <tr>, mỗi dòng có
+//   19 ô + inline style. Gán bằng `innerHTML = <chuỗi rất lớn>` sẽ:
+//     - Block main thread liên tục ~1-3 GIÂY → UI ĐỨNG HÌNH (lag)
+//     - Tạo hàng trăm nút/input → layout thrash
+//
+// GIẢI PHÁP: Chia dòng thành các LÔ (chunk) 40 dòng, nối tiếp qua
+//   requestAnimationFrame (fallback setTimeout) → mỗi frame chỉ chèn
+//   40 dòng → trình duyệt vẫn vẽ/kéo được → KHÔNG bị đứng hình.
+//
+// ⚠️ CHỐNG NHÂN ĐÔI: dùng "token" đánh dấu lượt render hiện hành.
+//   Nếu có lượt render mới bắt đầu (bấm quét / listener), token cũ bị
+//   huỷ → các chunk còn dang dở dừng lại (không ghi thêm vào DOM).
+// ================================================================
+const RENDER_CHUNK_SIZE = 40;
+// Token riêng cho TỪNG bảng → lượt render của bảng A không huỷ bảng B.
+const _renderTokens = new WeakMap();
+
+/** Lấy token lượt render hiện hành của 1 phần tử (đồng bộ tăng 1) */
+function _nextRenderToken(el) {
+  const t = (_renderTokens.get(el) || 0) + 1;
+  _renderTokens.set(el, t);
+  return t;
+}
+
+/** Lên lịch chạy callback ở frame kế tiếp (fallback khi không có rAF) */
+function _nextFrame(fn) {
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(fn);
+  } else {
+    setTimeout(fn, 16);
+  }
+}
+
+/**
+ * Chèn danh sách HTML dòng vào tbody theo LÔ (không block UI).
+ *
+ * @param {HTMLElement} tbody
+ * @param {string[]} chunkItems  mỗi phần tử = HTML của 1 dòng
+ * @param {number} token         token của lượt render (để huỷ lượt cũ)
+ * @param {string} emptyHtml     HTML hiển thị khi không có dòng nào
+ * @returns {Promise<void>}
+ */
+function renderRowsChunked(tbody, chunkItems, token, emptyHtml = "") {
+  return new Promise((resolve) => {
+    if (!tbody) {
+      resolve();
+      return;
+    }
+    if (!chunkItems.length) {
+      tbody.innerHTML = emptyHtml;
+      resolve();
+      return;
+    }
+
+    // Dọn bảng 1 lần, sau đó chèn theo lô.
+    tbody.innerHTML = "";
+
+    let i = 0;
+    // ⚠️ Dùng <tbody> tạm (KHÔNG dùng <template>): trình phân tích HTML
+    //    với ngữ cảnh <template> có thể BỎ QUA thẻ <tr> → mất dòng.
+    //    <tbody> tạm thì <tr> luôn được giữ đúng.
+    const holder = document.createElement("tbody");
+    const step = () => {
+      // Lượt render mới đã bắt đầu → huỷ lượt này (tránh nhân đôi).
+      if (token !== _renderTokens.get(tbody)) {
+        resolve();
+        return;
+      }
+      const end = Math.min(i + RENDER_CHUNK_SIZE, chunkItems.length);
+      // Gom 1 lô vào 1 chuỗi → parse 1 lần (nhanh hơn nhiều lần append).
+      holder.innerHTML = chunkItems.slice(i, end).join("");
+      const frag = document.createDocumentFragment();
+      while (holder.firstChild) frag.appendChild(holder.firstChild);
+      tbody.appendChild(frag);
+      i = end;
+
+      if (i < chunkItems.length) {
+        _nextFrame(step);
+      } else {
+        resolve();
+      }
+    };
+    _nextFrame(step);
+  });
+}
+
+// ================================================================
 // 🎯 Hàm đếm cuộc hội thoại từ inbox theo tag [N1], [N2]...
 // NGUỒN ĐẾM DUY NHẤT: nội dung tin nhắn + tên quảng cáo đính kèm
 // (ad_title trong referral của messages)
@@ -93,6 +182,21 @@ window.countInboxConversationsByTag = async function (adsetName) {
     if (!tagMatch) return null; // Không có tag, trả về null để dùng CPR mặc định
     const tag = tagMatch[1].trim().toUpperCase();
     const tagBracket = `[${tag}]`;
+
+    // (A2) ƯU TIÊN index tag trong RAM (CampCore.getInboxTagIndex)
+    //   → không đọc/deserialize toàn bộ "inboxBgCache" cho MỖI nhóm.
+    if (window.CampCore?.getInboxTagIndex) {
+      try {
+        const { index, list } = await window.CampCore.getInboxTagIndex();
+        if (list?.length) {
+          const set = index.get(tag);
+          if (set) return set.size;
+        }
+      } catch (e) {
+        /* bỏ qua → dùng cách đọc storage bên dưới */
+      }
+    }
+
     console.log(`🔍 Đang tìm tag [${tag}] trong inbox cho nhóm: ${adsetName}`);
 
     // Lấy dữ liệu cache inbox từ background.js (poll mỗi 1 phút)
@@ -2125,14 +2229,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       const billingList = document.getElementById("billingList");
       if (!tableBody) return;
 
-      // ⭐ BUFFER HTML — chỉ gán vào DOM 1 lần ở cuối hàm (atomic).
-      //    Lý do: trước đây hàm xoá DOM (`innerHTML = ""`) → await dữ liệu →
-      //    rồi `innerHTML +=`. Khi 2 luồng render chạy SONG SONG (nút quét +
-      //    listener "camp-core-updated"), cả 2 đều xoá DOM trước khi ghi →
-      //    kết quả dữ liệu bị NHÂN ĐÔI.
-      //    Cách sửa: dựng toàn bộ HTML vào buffer string, gán 1 lần duy nhất.
-      let rowsHtml = "";
-      let pausedRowsHtml = "";
+      // ⭐ BUFFER HTML — dựng sẵn HTML từng dòng, KHÔNG gán thẳng vào DOM.
+      //    (B1) Render theo LÔ (chunked) để không block UI khi có 500-1000 dòng.
+      //    Lý do buffer: trước đây xoá DOM → await → `innerHTML +=`; 2 luồng
+      //    render chạy SONG SONG sẽ nhân đôi dữ liệu. Giữ nguyên nguyên tắc
+      //    "dựng xong rồi mới ghi" nhưng chia việc ghi thành nhiều lô.
+      const rowsChunks = [];
+      const pausedRowsChunks = [];
       let billingHtml = "";
 
       const core = await fetchCoreState();
@@ -2330,7 +2433,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 ? parseFloat(insights.frequency).toFixed(2).replace(".", ",")
                 : "0,00";
 
-              rowsHtml += `
+              rowsChunks.push(`
         <tr>
             ${actionButton}
             <td style="font-size:11px; color:#606770">${accountName}</td>
@@ -2352,9 +2455,9 @@ document.addEventListener("DOMContentLoaded", async () => {
             <td class="metric">${Math.round(insights.cpc || 0).toLocaleString("vi-VN")} đ</td>
             <td class="metric" style="color:#8a3ab9">${insights.ctr ? parseFloat(insights.ctr).toFixed(2).replace(".", ",") : 0}%</td>
         </tr>
-    `;
+    `);
             } else if (pausedTableBody) {
-              pausedRowsHtml += `<tr>${actionButton}<td style="font-size:12px; font-weight:bold;">${adset.name}</td><td class="metric" style="color:#d97706">${spendStr}</td><td><span style="color:#31a24c; font-weight:bold;">${effectiveCount}</span></td>${configCol}</tr>`;
+              pausedRowsChunks.push(`<tr>${actionButton}<td style="font-size:12px; font-weight:bold;">${adset.name}</td><td class="metric" style="color:#d97706">${spendStr}</td><td><span style="color:#31a24c; font-weight:bold;">${effectiveCount}</span></td>${configCol}</tr>`);
             }
           }
 
@@ -2443,11 +2546,23 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       }
 
-      // ⭐ GÁN 1 LẦN DUY NHẤT (atomic) — chống nhân đôi khi 2 luồng render
-      //    chạy song song. Gán (ghi đè) chứ không phải += (cộng dồn).
+      // (B1) RENDER THEO LÔ — không block UI.
+      //   • Token đánh dấu lượt render: lượt mới → lượt cũ dừng lại (chống nhân đôi).
+      //   • Chia 40 dòng / frame → trình duyệt vẫn phản hồi mượt mà.
       if (targetStatus === "ACTIVE") {
-        tableBody.innerHTML = rowsHtml || `<tr><td colspan="19" style="text-align:center; color:#8c939d; padding:14px;">Chưa có nhóm nào đã tiêu tiền hôm nay.</td></tr>`;
-      } else if (pausedTableBody) pausedTableBody.innerHTML = pausedRowsHtml;
+        await renderRowsChunked(
+          tableBody,
+          rowsChunks,
+          _nextRenderToken(tableBody),
+          `<tr><td colspan="19" style="text-align:center; color:#8c939d; padding:14px;">Chưa có nhóm nào đã tiêu tiền hôm nay.</td></tr>`,
+        );
+      } else if (pausedTableBody) {
+        await renderRowsChunked(
+          pausedTableBody,
+          pausedRowsChunks,
+          _nextRenderToken(pausedTableBody),
+        );
+      }
       if (billingList) billingList.innerHTML = billingHtml;
 
       document.getElementById("loading").style.display = "none";
@@ -2541,7 +2656,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
-      let html = "";
+      const rowChunks = [];
       for (const [cid, c] of byCampaign.entries()) {
         const campaignActive =
           String(c.campaignStatus).toUpperCase() === "ACTIVE";
@@ -2561,7 +2676,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         // Nút tắt chiến dịch (bảng này chỉ hiện CD đang bật → luôn có nút TẮT)
         const actionHtml = `<button class="btn btn-red btn-pause-campaign" data-campaign-id="${escapeHtml(cid)}" data-campaign-name="${escapeHtml(c.campaignName)}" data-action="pause" style="padding:5px 10px; font-size:11px; cursor:pointer; border:none; border-radius:4px;">⛔ TẮT CHIẾN DỊCH</button>`;
 
-        html += `
+        rowChunks.push(`
           <tr>
             <td style="font-size:11px; color:#606770;">${escapeHtml(c.accountName)}</td>
             <td style="color:#1877f2; font-size:12px; font-weight:bold;">${escapeHtml(c.campaignName)}</td>
@@ -2569,10 +2684,11 @@ document.addEventListener("DOMContentLoaded", async () => {
             <td>${groupsHtml}</td>
             <td>${spendHtml}</td>
             <td>${actionHtml}</td>
-          </tr>`;
+          </tr>`);
       }
 
-      tbody.innerHTML = html;
+      // (B1) Render theo lô — không block UI khi có nhiều chiến dịch.
+      await renderRowsChunked(tbody, rowChunks, _nextRenderToken(tbody));
     };
     window.renderCampaignStatusTable = renderCampaignStatusTable;
 
@@ -9539,6 +9655,13 @@ Trả về CHỈ một chuỗi JSON hợp lệ theo định dạng:
   chrome.storage?.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.inboxBgCache && Array.isArray(changes.inboxBgCache.newValue)) {
+      // (A2) Cache inbox trong storage đổi → index tag trong RAM không còn đúng
+      //      → xoá để lần đếm sau dựng lại từ cache mới.
+      try {
+        window.CampCore?.invalidateInboxTagIndex?.();
+      } catch (e) {
+        /* bỏ qua */
+      }
       inboxMergeConversations(changes.inboxBgCache.newValue);
       inboxState.lastPollAt = changes.inboxBgCacheAt?.newValue || Date.now();
       inboxTickLiveStatus();

@@ -3675,9 +3675,22 @@
       <div id="ccStats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px"></div>
 
       <!-- Bảng nhóm đang chạy -->
-      <h3 style="font-size:14px;margin:0 0 10px;color:#0f172a">
-        🔄 NHÓM ĐANG BẬT &amp; CHIẾN DỊCH ĐANG BẬT (chọn để giám sát)
-      </h3>
+      <div
+        style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"
+      >
+        <h3 style="font-size:14px;margin:0;color:#0f172a">
+          🔄 NHÓM ĐANG BẬT (chọn để giám sát)
+        </h3>
+        <button
+          id="ccBtnMonitorAll"
+          class="btn btn-green"
+          title="Giám sát TẤT CẢ nhóm đang bật (không cần tick tay từng nhóm)"
+          style="width:auto;padding:7px 14px;font-size:12px;margin:0;white-space:nowrap"
+        >
+          ⚡ GIÁM SÁT TẤT CẢ NHÓM
+        </button>
+        
+      </div>
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
           <input type="checkbox" id="ccSelectAll" style="width:16px;height:16px;cursor:pointer" />

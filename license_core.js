@@ -61,7 +61,7 @@
    * Sinh cap khoa moi: node _gen_keys.js
    * ------------------------------------------------------- */
   const LICENSE_PUBLIC_KEY_B64 =
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERpl81Sw2CQnsbqdVwWg4ucmVz4WSn/H4Zheo9VkvDbJrcK/xU3Te3gW7bm5mvclkpSOr1wQl6gfc/TbBhcMcng==";
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7TZCBHimLGN6dtQ6tv45UR4IPknmI5GyfE5o4mnTV1B0xk8HF+Ke/Ae4aqooT4jPwGTD+Fw8nZ17PU2E55u/RQ==";
 
   // ---- Cua so offline grace: cho phep mat mang toi da 6 gio ----
   const OFFLINE_GRACE = 6 * 60 * 60 * 1000;
@@ -345,46 +345,60 @@
    * Day la "hang rao" chong gia mao du lieu cuc bo.
    *
    * @param {object} lic - license doc tu chrome.storage.local
-   * @returns {Promise<{ok:boolean, reason:string, data:object|null}>}
+   * @returns {Promise<{ok:boolean, reason:string, data:object|null, legacy:boolean}>}
    */
   async function verifyLocalLicense(lic) {
-    if (!lic) return { ok: false, reason: "Chua kich hoat", data: null };
+    if (!lic) {
+      return { ok: false, reason: "Chua kich hoat", data: null, legacy: false };
+    }
+
+    // === LEGACY: license kich hoat TRUOC khi trien khai chu ky so ===
+    // Ca payload VA signature deu vang (du lieu license thoi phong ky so).
+    // Day KHONG phai gia mao -> cho phep hoi server cap lai chu ky.
+    if (!lic.payload && !lic.signature) {
+      return {
+        ok: false,
+        reason: "License cu chua co chu ky so",
+        data: null,
+        legacy: true,
+      };
+    }
 
     const r = await verifySignature(lic.payload, lic.signature);
     if (!r.ok) {
-      return { ok: false, reason: r.reason, data: null };
+      return { ok: false, reason: r.reason, data: null, legacy: false };
     }
     const d = r.data || {};
 
     // Payload phai khop key
     if (String(d.key || "") !== String(lic.key || "")) {
-      return { ok: false, reason: "Payload key khong khop", data: null };
+      return { ok: false, reason: "Payload key khong khop", data: null, legacy: false };
     }
     // Payload phai khop device
     if (
       String(d.deviceId || "").toUpperCase() !==
       String(lic.deviceId || "").toUpperCase()
     ) {
-      return { ok: false, reason: "Payload deviceId khong khop", data: null };
+      return { ok: false, reason: "Payload deviceId khong khop", data: null, legacy: false };
     }
     // Payload phai khop han su dung
     if (Number(d.expiresAt || 0) !== Number(lic.expiresAt || 0)) {
-      return { ok: false, reason: "Payload expiresAt khong khop", data: null };
+      return { ok: false, reason: "Payload expiresAt khong khop", data: null, legacy: false };
     }
     // Payload phai khop trang thai
     if (String(d.status || "") !== String(lic.status || "")) {
-      return { ok: false, reason: "Payload status khong khop", data: null };
+      return { ok: false, reason: "Payload status khong khop", data: null, legacy: false };
     }
     // Payload phai con han
     if (d.expiresAt && d.expiresAt > 0 && d.expiresAt < Date.now()) {
-      return { ok: false, reason: "Payload da het han", data: null };
+      return { ok: false, reason: "Payload da het han", data: null, legacy: false };
     }
     // issuedAt phai khong tuong lai (chong gia mao thoi gian)
     if (d.issuedAt && d.issuedAt > Date.now() + 60 * 60 * 1000) {
-      return { ok: false, reason: "issuedAt khong hop le", data: null };
+      return { ok: false, reason: "issuedAt khong hop le", data: null, legacy: false };
     }
 
-    return { ok: true, reason: "", data: d };
+    return { ok: true, reason: "", data: d, legacy: false };
   }
 
   /* ---------------------------------------------------------
@@ -475,6 +489,13 @@
     // === Uu tien 1: chu ky so phai hop le TRUOC khi tin ===
     const sig = await verifyLocalLicense(lic);
     if (!sig.ok) {
+      // === LEGACY: license kich hoat TRUOC khi trien khai chu ky so ===
+      // Khong co payload/signature -> khong phai gia mao.
+      // Hoi server cap lai chu ky (verify() se luu payload+signature moi).
+      if (sig.legacy) {
+        return await verify();
+      }
+
       // Du lieu cuc bi sua/gia mao -> xoa va chan
       await clearLicense();
       return {
@@ -528,6 +549,17 @@
    * XAC MINH (heartbeat)
    * ------------------------------------------------------- */
 
+  /**
+   * Fail-open CHI duoc phep khi license da co chu ky hop le cuc bo.
+   * License legacy (chua co payload/signature) KHONG duoc fail-open:
+   * neu khong, nguoi dung tu gia mao du lieu trong storage roi offline
+   * => lan qua het hang rao.
+   */
+  async function canFailOpen(lic) {
+    const local = await verifyLocalLicense(lic);
+    return local.ok === true;
+  }
+
   async function verify() {
     const lic = await getLicense();
     if (!lic || !lic.key) {
@@ -557,24 +589,27 @@
 
       if (!ping.ok) {
         // Server thuc su khong doi -> fail-OPEN voi cua so grace
-        await markOffline();
-        const grace = await graceRemaining();
-        if (grace > 0) {
-          const updated = {
-            ...lic,
-            lastVerify: Date.now(),
-            pendingRecheck: true,
-          };
-          await saveLicense(updated);
-          return {
-            allowed: true,
-            state: "valid",
-            message: "Khong ket noi server, dung ban cache",
-            license: updated,
-            needsNetwork: true,
-          };
+        // CHI khi license da co chu ky hop le (legacy thi khong duoc).
+        if (await canFailOpen(lic)) {
+          await markOffline();
+          const grace = await graceRemaining();
+          if (grace > 0) {
+            const updated = {
+              ...lic,
+              lastVerify: Date.now(),
+              pendingRecheck: true,
+            };
+            await saveLicense(updated);
+            return {
+              allowed: true,
+              state: "valid",
+              message: "Khong ket noi server, dung ban cache",
+              license: updated,
+              needsNetwork: true,
+            };
+          }
         }
-        // Het cua so grace -> chan (fail-closed)
+        // Het cua so grace (hoac license chua co chu ky) -> chan (fail-closed)
         await clearLicense();
         await clearOffline();
         return {
@@ -621,22 +656,25 @@
       // Loi tam thoi (vd rate_limit) -> ping de quyet dinh
       const ping = await pingServer();
       if (!ping.ok) {
-        await markOffline();
-        const grace = await graceRemaining();
-        if (grace > 0) {
-          const updated = {
-            ...lic,
-            lastVerify: Date.now(),
-            pendingRecheck: true,
-          };
-          await saveLicense(updated);
-          return {
-            allowed: true,
-            state: "valid",
-            message: data.message || "Khong xac minh duoc, dung ban cache",
-            license: updated,
-            needsNetwork: true,
-          };
+        // CHI fail-open khi license da co chu ky hop le (legacy thi khong duoc).
+        if (await canFailOpen(lic)) {
+          await markOffline();
+          const grace = await graceRemaining();
+          if (grace > 0) {
+            const updated = {
+              ...lic,
+              lastVerify: Date.now(),
+              pendingRecheck: true,
+            };
+            await saveLicense(updated);
+            return {
+              allowed: true,
+              state: "valid",
+              message: data.message || "Khong xac minh duoc, dung ban cache",
+              license: updated,
+              needsNetwork: true,
+            };
+          }
         }
         await clearLicense();
         await clearOffline();
@@ -664,6 +702,23 @@
     // Uu tien 1: chi chap nhan duoi co chu ky hop le
     const signed = await verifySignature(data.payload, data.signature);
     if (!signed.ok) {
+      // === THIEU CHU KY (server chua duoc cau hinh khoa rieng) ===
+      // `signature` rong/null => Worker thieu Secret LICENSE_PRIVATE_KEY.
+      // Day la LOI CAU HINH cua admin, KHONG phai key bi gia mao.
+      // KHONG xoa license (nguoi dung van dung duoc sau khi admin fix server).
+      if (!data.payload || !data.signature) {
+        return {
+          allowed: false,
+          state: "invalid",
+          message:
+            "License server chua duoc cau hinh khoa chu ky so (secret LICENSE_PRIVATE_KEY). " +
+            "Vui long lien he admin.",
+          license: lic,
+          needsNetwork: false,
+        };
+      }
+
+      // Chu ky co nhung SAI -> gia mao that su -> xoa va chan
       await clearLicense();
       return {
         allowed: false,
@@ -789,6 +844,17 @@
     // === Uu tien 1: bat buoc phai co chu ky hop le moi luu ===
     const signed = await verifySignature(data.payload, data.signature);
     if (!signed.ok) {
+      // Server chua duoc cau hinh khoa rieng -> LOI CAU HINH, khong phai gia mao.
+      if (!data.payload || !data.signature) {
+        return {
+          ok: false,
+          message:
+            "License server chua duoc cau hinh khoa chu ky so (secret LICENSE_PRIVATE_KEY). " +
+            "Vui long lien he admin.",
+          code: "server_not_signed",
+        };
+      }
+
       return {
         ok: false,
         message:

@@ -74,7 +74,7 @@ Server ky moi payload license bang ECDSA P-256. Extension xac minh bang khoa con
 **Sinh cap khoa moi (neu can doi):**
 
 ```bash
-node _gen_keys.js
+node gen_keys.js
 ```
 
 Lenh nay in ra 2 gia tri:
@@ -277,6 +277,22 @@ Extension xac minh chu ky bang khoa cong nhung san truoc khi tin bat ky thu
 giong gi trong `chrome.storage.local`. Sua `expiresAt`, xoa `signature`, hay dung
 `lastVerify` de "gia han" deu bi chan voi trang thai `tampered`.
 
+**License da kich hoat TRUOC khi trien khai chu ky so (legacy):**
+
+Key kich hoat truoc tinh nang nay se khong co `payload`/`signature` trong
+`chrome.storage.local`. Extension tu dong nhan biet truong hop nay va **tu hoi
+server cap lai chu ky** (goi `/license/verify`) — nguoi dung khong phai nhap lai
+key.
+
+| Trang thai trong storage | Y nghia | Xu ly |
+| --- | --- | --- |
+| Khong co `payload` va `signature` | License legacy (pre-signing) | Hoi server ky lai -> hoat dong binh thuong |
+| Co `payload` nhung mat `signature` | Nguoi dung sua du lieu | Chan `tampered` + xoa license |
+
+> Neu server CHUA duoc cau hinh `LICENSE_PRIVATE_KEY`, server tra
+> `signature: null` va extension bao loi **cau hinh** (khong phai "gia mao"),
+> license duoc giu nguyên de dung lai sau khi admin fix server.
+
 ### 6.5 Rate limit
 
 - 20 lan kich hoat / 10 phut / IP
@@ -302,6 +318,9 @@ Mac dinh 1 may/key. Khi user go may cu vao may moi, server bao `max_devices`. Ba
 | `Key dang bi khoa tam thoi` | 5 lan nhap sai | Do 15 phut |
 | `hasKv: false` khi ping | Chua binding KV | Them binding `LICENSE_KV` |
 | `hasAdmin: false` khi ping | Chua dat `ADMIN_PASSWORD` | Them Secret |
+| `hasSigning: false` khi ping | Chua dat Secret `LICENSE_PRIVATE_KEY` | Chay `node gen_keys.js` -> them Secret -> deploy lai Worker |
+| `Chu ky license khong hop le (Thieu payload hoac chu ky)` | Server chua duoc cau hinh khoa ky | Kiem tra `hasSigning` tren `/license/ping` |
+| `License server chua duoc cau hinh khoa chu ky so` | Server thieu `LICENSE_PRIVATE_KEY` | Admin them Secret roi deploy lai |
 | Overlay khong an sau khi kich hoat | Server tra loi loi | Mo Console dashboard xem loi |
 
 ---

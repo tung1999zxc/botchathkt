@@ -164,6 +164,12 @@
       return;
     }
 
+    // Server chua duoc cau hinh khoa ky -> loi admin, khong phai loi nguoi dung
+    if (result.code === "server_not_signed") {
+      showMsg(result.message || "License server chua duoc cau hinh khoa chu ky so.", "err");
+      return;
+    }
+
     showMsg(result.message || "Key khong hop le", "err");
   }
 

@@ -6,7 +6,7 @@ const {
   TEST_PRIVATE_KEY,
   TEST_PUBLIC_KEY,
   patchPublicKey,
-} = require("./_test_keys.js");
+} = require("./test_keys.js");
 
 const dir = __dirname;
 
@@ -22,7 +22,7 @@ function ok(cond, label, extra) {
   }
 }
 
-// ---- Cap khoa that cho TEST (cung cap cap voi server) ----
+// ---- Cap khoa that cho TEST (sinh dong moi, khong commit vao git) ----
 const PRIV_B64 = TEST_PRIVATE_KEY;
 const PUB_B64 = TEST_PUBLIC_KEY;
 
@@ -151,6 +151,32 @@ global.fetch = async (url, opts) => {
     });
   }
 
+  // "nosig" = server CHUA duoc cau hinh khoa rieng -> tra signature: null
+  if (serverMode === "nosig") {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        message: "OK",
+        expiresAt: Date.now() + 30 * 86400000,
+        plan: "30d",
+        maxDevices: 1,
+        serverTime: Date.now(),
+        payload: JSON.stringify({
+          key: (lastBody && lastBody.key) || "",
+          deviceId: (lastBody && lastBody.deviceId) || "",
+          plan: "30d",
+          expiresAt: Date.now() + 30 * 86400000,
+          status: "active",
+          maxDevices: 1,
+          issuedAt: Date.now(),
+          nonce: "n-" + Date.now(),
+        }),
+        signature: null,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
   const key = (lastBody && lastBody.key) || "";
   const deviceId = (lastBody && lastBody.deviceId) || "";
   const payload = buildPayload({
@@ -201,8 +227,8 @@ const screen = { width: 1920, height: 1080, colorDepth: 24 };
 // Patch khoa cong trong license_core.js sang khoa cong TEST.
 const coreSrcRaw = fs.readFileSync(path.join(dir, "license_core.js"), "utf8");
 const PROD_PUB =
-  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERpl81Sw2CQnsbqdVwWg4ucmVz4WSn/H4Zheo9VkvDbJrcK/xU3Te3gW7bm5mvclkpSOr1wQl6gfc/TbBhcMcng==";
-const src = patchPublicKey(coreSrcRaw, PROD_PUB);
+  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7TZCBHimLGN6dtQ6tv45UR4IPknmI5GyfE5o4mnTV1B0xk8HF+Ke/Ae4aqooT4jPwGTD+Fw8nZ17PU2E55u/RQ==";
+const src = patchPublicKey(coreSrcRaw, PROD_PUB, TEST_PUBLIC_KEY);
 function makeCtx(extra) {
   const ctx = vm.createContext({
     chrome,
@@ -487,6 +513,70 @@ async function main() {
     fs.existsSync(path.join(dir, ".gitignore")),
     "Co .gitignore",
   );
+
+  console.log("\n=== 22. LEGACY: LICENSE KICH HOAT TRUOC KHI TRIEN KHAI CHU KY SO ===");
+  store.ccLicenseFailedAttempts = 0;
+  store.ccLicenseLockedUntil = 0;
+  delete store.ccLicenseOfflineSince;
+  serverMode = "ok";
+  // Tao license CU: co key + deviceId + expiresAt, KHONG co payload/signature
+  const legacy = {
+    key: "TL_ABCD-EFGH-IJKL-MNOP",
+    deviceId: d1,
+    activatedAt: Date.now() - 86400000,
+    expiresAt: Date.now() + 30 * 86400000,
+    lastVerify: Date.now(),
+    status: "active",
+    plan: "30d",
+    maxDevices: 1,
+  };
+  await new Promise((r) => chrome.storage.local.set({ ccLicense: legacy }, r));
+  res = await Core.check();
+  ok(
+    res.allowed === true && res.state === "valid",
+    "License legacy (thieu chu ky) -> duoc hoi server cap lai chu ky va cho qua",
+    JSON.stringify(res),
+  );
+  ok(
+    !!store.ccLicense.payload && !!store.ccLicense.signature,
+    "License legacy duoc cap nhat payload + chu ky moi",
+    JSON.stringify(store.ccLicense && {
+      payload: !!store.ccLicense.payload,
+      signature: !!store.ccLicense.signature,
+    }),
+  );
+
+  console.log("\n=== 23. LEGACY + OFFLINE -> KHONG DUOC FAIL-OPEN ===");
+  store.ccLicenseFailedAttempts = 0;
+  store.ccLicenseLockedUntil = 0;
+  delete store.ccLicenseOfflineSince;
+  // License legacy (khong payload/signature) lai mat mang
+  await new Promise((r) => chrome.storage.local.set({ ccLicense: legacy }, r));
+  serverMode = "serverdown";
+  res = await Core.check();
+  ok(
+    res.allowed === false,
+    "License legacy + mat mang -> KHONG fail-open (chua co chu ky)",
+    JSON.stringify(res),
+  );
+  serverMode = "ok";
+
+  console.log("\n=== 24. SERVER CHUA CAU HINH KHOA KY -> LOI CAU HINH, KHONG GI MAO ===");
+  serverMode = "nosig";
+  store.ccLicenseFailedAttempts = 0;
+  store.ccLicenseLockedUntil = 0;
+  res = await Core.activate("TL_ABCD-EFGH-IJKL-MNOP");
+  ok(
+    res.ok === false && res.code === "server_not_signed",
+    "Server thieu chu ky -> bao loi cau hinh (khong phai bad_signature)",
+    JSON.stringify(res),
+  );
+  ok(
+    !/gia mao/i.test(res.message || ""),
+    "Thong bao khong nhac 'gia mao' khi loi cau hinh server",
+    res.message,
+  );
+  serverMode = "ok";
 
   console.log("\n=========================================");
   console.log("KET QUA: " + pass + " PASS / " + fail + " FAIL");

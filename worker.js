@@ -33,7 +33,7 @@ const FB_GRAPH = "https://graph.facebook.com/v25.0";
  * Sinh cap khoa moi: node _gen_keys.js
  * ========================================================================= */
 const LICENSE_PUBLIC_KEY_B64 =
-  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERpl81Sw2CQnsbqdVwWg4ucmVz4WSn/H4Zheo9VkvDbJrcK/xU3Te3gW7bm5mvclkpSOr1wQl6gfc/TbBhcMcng==";
+  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7TZCBHimLGN6dtQ6tv45UR4IPknmI5GyfE5o4mnTV1B0xk8HF+Ke/Ae4aqooT4jPwGTD+Fw8nZ17PU2E55u/RQ==";
 
 const HTML_ESC = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({
@@ -826,6 +826,10 @@ async function routeLicense(request, env, url, origin) {
         hasKv: !!env.LICENSE_KV,
         hasAdmin: !!env.ADMIN_PASSWORD,
         hasSigning: !!(await getPrivateKey(env)),
+        // Fingerprint khoa cong dang chay tren server.
+        // So voi SHA256(khoa cong trong license_core.js) de kiem chung
+        // khoa cong client va khoa rieng tren Worker co khop hay khong.
+        keyId: await licenseKeyId(),
       },
       200,
       origin,

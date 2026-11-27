@@ -1,7 +1,7 @@
 // Test harness: chay worker.js voi KV gia lap, kiem tra day du luong license.
 const fs = require("fs");
 const path = require("path");
-const { TEST_PRIVATE_KEY, TEST_PUBLIC_KEY, patchPublicKey } = require("./_test_keys.js");
+const { TEST_PRIVATE_KEY, TEST_PUBLIC_KEY, patchPublicKey } = require("./test_keys.js");
 
 const dir = __dirname;
 
@@ -67,8 +67,8 @@ async function verifySig(payload, signature) {
 // chu ky bang cap khoa test (khong can khoa production).
 const workerSrc = fs.readFileSync(path.join(dir, "worker.js"), "utf8");
 const PROD_PUB =
-  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERpl81Sw2CQnsbqdVwWg4ucmVz4WSn/H4Zheo9VkvDbJrcK/xU3Te3gW7bm5mvclkpSOr1wQl6gfc/TbBhcMcng==";
-const src = patchPublicKey(workerSrc, PROD_PUB);
+  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7TZCBHimLGN6dtQ6tv45UR4IPknmI5GyfE5o4mnTV1B0xk8HF+Ke/Ae4aqooT4jPwGTD+Fw8nZ17PU2E55u/RQ==";
+const src = patchPublicKey(workerSrc, PROD_PUB, TEST_PUBLIC_KEY);
 const { pathToFileURL } = require("url");
 
 async function loadWorker() {

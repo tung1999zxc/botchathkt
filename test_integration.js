@@ -12,7 +12,7 @@ const {
   TEST_PRIVATE_KEY,
   TEST_PUBLIC_KEY,
   patchPublicKey,
-} = require("./_test_keys.js");
+} = require("./test_keys.js");
 
 const dir = __dirname;
 
@@ -67,10 +67,11 @@ const env = {
 
 // ---- Nap worker.js (patch khoa cong sang khoa test) ----
 const PROD_PUB =
-  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAERpl81Sw2CQnsbqdVwWg4ucmVz4WSn/H4Zheo9VkvDbJrcK/xU3Te3gW7bm5mvclkpSOr1wQl6gfc/TbBhcMcng==";
+  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7TZCBHimLGN6dtQ6tv45UR4IPknmI5GyfE5o4mnTV1B0xk8HF+Ke/Ae4aqooT4jPwGTD+Fw8nZ17PU2E55u/RQ==";
 const workerSrc = patchPublicKey(
   fs.readFileSync(path.join(dir, "worker.js"), "utf8"),
   PROD_PUB,
+  TEST_PUBLIC_KEY,
 );
 
 let worker;
@@ -152,6 +153,7 @@ const clientFetch = async (url, opts) => {
 const coreSrc = patchPublicKey(
   fs.readFileSync(path.join(dir, "license_core.js"), "utf8"),
   PROD_PUB,
+  TEST_PUBLIC_KEY,
 );
 
 const ctx = vm.createContext({

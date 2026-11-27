@@ -206,19 +206,45 @@ Chay test truc tiep tren may ban:
 node test_license.js
 ```
 
-Kiem tra Worker + license API + trang admin (42 assertions).
+Kiem tra Worker + license API + trang admin (62 assertions).
 
 ```bash
 node test_core.js
 ```
 
-Kiem tra module phia client tren trinh duyet gia lap (30 assertions).
+Kiem tra module phia client tren trinh duyet gia lap (51 assertions).
+
+```bash
+node test_integration.js
+```
+
+Kiem tra tich hop client <-> server that (17 assertions).
 
 Cau hinh chay:
 ```
-KET QUA: 42 PASS / 0 FAIL
-KET QUA: 30 PASS / 0 FAIL
+KET QUA: 62 PASS / 0 FAIL
+KET QUA: 51 PASS / 0 FAIL
+KET QUA: 17 PASS / 0 FAIL
 ```
+
+### 5.1 Kiem chung tren SERVER THAT
+
+```bash
+node verify_live_key.js TL_XXXX-XXXX-XXXX-XXXX
+```
+
+Kiem tra key that tren server that: ping, xac minh chu ky bang khoa cong
+production (doc tu `license_core.js`), doi chieu payload. **Khong** can deploy.
+
+### 5.2 Kiem chung tinh huong LEGACY (key kich hoat truoc ky so)
+
+```bash
+node test_e2e_legacy.js TL_XXXX-XXXX-XXXX-XXXX
+```
+
+Mo phong chinh xac tinh huong cua nguoi dung: license trong storage **khong co**
+`payload`/`signature` (kich hoat truoc khi trien khai chu ky so) -> extension
+tu dong hoi server cap lai chu ky -> cho qua, **khong can nhap lai key**.
 
 ---
 
@@ -251,10 +277,19 @@ Tren Worker, kiem tra trang thai chu ky:
 
 ```
 GET /license/ping
--> { "ok": true, "hasSigning": true, ... }
+-> { "ok": true, "hasSigning": true, "keyId": "141ccc4e11366b08", ... }
 ```
 
 `hasSigning: false` => chua dat Secret `LICENSE_PRIVATE_KEY`.
+
+`keyId` là fingerprint cua khoa cong **dang chay tren Worker**. So voi
+`SHA256(LICENSE_PUBLIC_KEY_B64 trong license_core.js)` (16 ky tu dau) — neu
+**khac** => khoa cong client va khoa rieng tren Worker **khong cùng một cặp**,
+chữ ký sẽ luôn sai. Kiem chung nhanh:
+
+```bash
+node verify_live_key.js TL_XXXX-XXXX-XXXX-XXXX
+```
 
 ### 6.4 Chu ky so (chong gia mao du lieu cuc bo)
 

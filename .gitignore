@@ -6,6 +6,7 @@ node_modules/
 
 # File tam sinh khi test
 _worker_test.mjs
+_worker_verify.mjs
 
 # KHONG commit khoa rieng / file chua khoa
 *.pem
